@@ -1,0 +1,9 @@
+.streamlit/secrets.toml
+.streamlit_runtime/
+__pycache__/
+*.pyc
+UI匯入照片暫存/
+輸出/
+抽查紀錄表樣板/
+*.sqlite
+輸入記憶.json
