@@ -656,10 +656,14 @@ def find_selected_record_table(template_path: Path, row: pd.Series):
     except Exception:
         return None
 
+    return find_selected_record_table_in_doc(src_doc, row)
+
+
+def find_selected_record_table_in_doc(doc, row: pd.Series):
     best_table = None
     best_score = -9999
 
-    for table in src_doc.tables:
+    for table in doc.tables:
         score = score_record_table_for_row(table, row)
         if score > best_score:
             best_score = score
@@ -670,6 +674,30 @@ def find_selected_record_table(template_path: Path, row: pd.Series):
         return None
 
     return best_table
+
+
+def keep_only_table_in_document(doc, table) -> None:
+    """
+    Preserve the selected table inside its original document instead of copying it
+    across documents. This keeps Word-only layout details such as vertical cells.
+    """
+    try:
+        body = doc._body._element
+        target_tbl = table._tbl
+        sect = source_table_section_pr(table)
+        fallback_sect = body.find(qn("w:sectPr"))
+        if sect is None and fallback_sect is not None:
+            sect = deepcopy(fallback_sect)
+
+        for child in list(body):
+            if child is target_tbl:
+                continue
+            body.remove(child)
+
+        if sect is not None:
+            body.append(deepcopy(sect))
+    except Exception:
+        pass
 
 
 def clear_document_body_keep_section(doc) -> None:
@@ -930,6 +958,50 @@ def force_record_table_fit_one_page(doc, table) -> None:
         pass
 
 
+def restore_record_stage_cells_layout(table) -> None:
+    """
+    Keep the left-side stage labels in the same vertical style as the template.
+    LibreOffice/.doc conversion and cross-document table copies can sometimes
+    recalculate these narrow cells as rotated text.
+    """
+    stage_labels = {"施工前", "施工中", "施工後"}
+    seen_cells: set[int] = set()
+
+    try:
+        for row in table.rows:
+            for cell in row.cells:
+                cell_id = id(cell._tc)
+                if cell_id in seen_cells:
+                    continue
+                seen_cells.add(cell_id)
+
+                text = normalize_text(cell.text).replace(" ", "")
+                if text not in stage_labels:
+                    continue
+
+                tc_pr = cell._tc.get_or_add_tcPr()
+                for old in list(tc_pr.findall(qn("w:textDirection"))):
+                    tc_pr.remove(old)
+
+                text_direction = OxmlElement("w:textDirection")
+                text_direction.set(qn("w:val"), "tbRlV")
+                tc_pr.append(text_direction)
+
+                v_align = tc_pr.find(qn("w:vAlign"))
+                if v_align is None:
+                    v_align = OxmlElement("w:vAlign")
+                    tc_pr.append(v_align)
+                v_align.set(qn("w:val"), "center")
+
+                for p in cell.paragraphs:
+                    try:
+                        p.alignment = 1
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
+
 def optimize_record_table_output_layout(doc, table) -> None:
     """
     抽查紀錄表輸出前的保守版面整理。
@@ -943,6 +1015,7 @@ def optimize_record_table_output_layout(doc, table) -> None:
     """
     try:
         set_record_page_small_margins(doc)
+        restore_record_stage_cells_layout(table)
         force_record_table_fit_one_page(doc, table)
     except Exception:
         pass
@@ -1342,16 +1415,28 @@ def create_record_words(
         return []
 
     append_to_existing = bool(base_record_word_bytes)
+    preserved_first_table = False
 
     if append_to_existing:
         out_doc = Document(BytesIO(base_record_word_bytes))
     else:
         first_template = Path(str(rows_to_output[0][0].get("抽查表工項路徑", "") or rows_to_output[0][0].get("抽查表樣本路徑", "")))
         out_doc = Document(str(first_template))
-        clear_document_body_keep_section(out_doc)
+        first_row = rows_to_output[0][0]
+        first_table = find_selected_record_table_in_doc(out_doc, first_row)
 
-    for idx, (row, source_table) in enumerate(rows_to_output):
-        if append_to_existing or idx > 0:
+        if first_table is not None:
+            keep_only_table_in_document(out_doc, first_table)
+            fill_selected_record_table(first_table, first_row)
+            optimize_record_table_output_layout(out_doc, first_table)
+            preserved_first_table = True
+        else:
+            clear_document_body_keep_section(out_doc)
+
+    rows_to_append = rows_to_output[1:] if preserved_first_table else rows_to_output
+
+    for idx, (row, source_table) in enumerate(rows_to_append):
+        if append_to_existing or preserved_first_table or idx > 0:
             append_page_break_before_next_table(out_doc)
 
         apply_source_table_section_to_doc(out_doc, source_table)
