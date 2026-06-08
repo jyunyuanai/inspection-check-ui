@@ -1293,7 +1293,11 @@ def fill_selected_record_table(table, row: pd.Series) -> None:
     return
 
 
-def create_record_words(df: pd.DataFrame, base_record_word_bytes: bytes | None = None) -> list[dict[str, Any]]:
+def create_record_words(
+    df: pd.DataFrame,
+    output_file_name: str = '',
+    base_record_word_bytes: bytes | None = None,
+) -> list[dict[str, Any]]:
     """
     第九十八版：
     - 支援接續舊抽查紀錄表 Word。
@@ -1361,9 +1365,7 @@ def create_record_words(df: pd.DataFrame, base_record_word_bytes: bytes | None =
         if code and code not in selected_codes:
             selected_codes.append(code)
 
-    code_part = "_".join(selected_codes) if selected_codes else "已選工項"
-    out_name = safe_output_name(f"抽查紀錄表_{code_part}", "抽查紀錄表_已選工項")
-    file_name = make_timestamped_download_name(out_name)
+    file_name = make_labeled_download_name(output_file_name, "抽查紀錄表")
 
     ensure_compact_record_document_tail(out_doc)
 
@@ -2206,6 +2208,20 @@ def make_timestamped_download_name(prefix: str, suffix: str = ".docx") -> str:
     return f"{safe_prefix}_{ts}{suffix}"
 
 
+def make_labeled_download_name(user_prefix: str, label: str, suffix: str = ".docx") -> str:
+    prefix = safe_output_name(user_prefix, "").strip()
+    label = safe_output_name(label, "Word").strip()
+
+    if not prefix:
+        stem = label
+    elif prefix.endswith(label):
+        stem = prefix
+    else:
+        stem = f"{prefix}{label}"
+
+    return f"{stem}{suffix}"
+
+
 def save_docx_to_bytes(doc) -> bytes:
     """
     把 Word 文件存到記憶體，供 st.download_button 下載。
@@ -2641,7 +2657,7 @@ def create_photo_word(df: pd.DataFrame, output_file_name: str = '', base_photo_w
 
             page_count += 1
 
-    file_name = make_timestamped_download_name(output_file_name or "工程抽查照片_UI版")
+    file_name = make_labeled_download_name(output_file_name, "工程抽查照片")
     compact_photo_word_spacing(doc)
     set_document_font_kai(doc)
     force_photo_title_size_16(doc)
@@ -3325,8 +3341,8 @@ def main() -> None:
         st.divider()
         output_file_name = st.text_input(
             "檔案名稱",
-            placeholder="例如：工程抽查照片",
-            help="輸出 Word 會使用這個檔名；空白時使用預設檔名。",
+            placeholder="",
+            help="可留空；空白時會自動使用工程抽查照片與抽查紀錄表作為檔名。",
             key="output_file_name",
         )
 
@@ -3477,6 +3493,7 @@ def main() -> None:
                     )
                     record_words = create_record_words(
                         edited,
+                        output_name_value,
                         base_record_word_bytes=st.session_state.get("existing_record_word_bytes"),
                     )
                     missing_record_templates = missing_selected_record_templates(edited)
