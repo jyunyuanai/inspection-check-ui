@@ -960,45 +960,46 @@ def force_record_table_fit_one_page(doc, table) -> None:
 
 def restore_record_stage_cells_layout(table) -> None:
     """
-    Keep the left-side stage labels in the same vertical style as the template.
-    LibreOffice/.doc conversion and cross-document table copies can sometimes
-    recalculate these narrow cells as rotated text.
+    Force the left-side stage labels to the requested stacked style:
+    施 / 工 / 前, 施 / 工 / 中, 施 / 工 / 後.
+
+    This avoids depending on Word textDirection, which can render differently
+    after LibreOffice conversion or cross-document table copies.
     """
     stage_labels = {"施工前", "施工中", "施工後"}
-    seen_cells: set[int] = set()
+    seen_cells = []
 
     try:
         from docx.shared import Cm, Pt
 
         for row in table.rows:
             for cell in row.cells:
-                cell_id = id(cell._tc)
-                if cell_id in seen_cells:
+                if any(cell._tc is seen for seen in seen_cells):
                     continue
-                seen_cells.add(cell_id)
+                seen_cells.append(cell._tc)
 
                 text = re.sub(r"\s+", "", normalize_text(cell.text))
                 if text not in stage_labels:
                     continue
 
                 tc_pr = cell._tc.get_or_add_tcPr()
+                for tag in ["w:textDirection", "w:noWrap", "w:tcFitText"]:
+                    old = tc_pr.find(qn(tag))
+                    if old is not None:
+                        tc_pr.remove(old)
                 for old in list(cell._tc.iter(qn("w:textDirection"))):
                     parent = old.getparent()
                     if parent is not None:
                         parent.remove(old)
-
-                text_direction = OxmlElement("w:textDirection")
-                text_direction.set(qn("w:val"), "tbRlV")
-                tc_pr.append(text_direction)
 
                 tc_w = tc_pr.find(qn("w:tcW"))
                 if tc_w is None:
                     tc_w = OxmlElement("w:tcW")
                     tc_pr.append(tc_w)
                 tc_w.set(qn("w:type"), "dxa")
-                tc_w.set(qn("w:w"), "420")
+                tc_w.set(qn("w:w"), "360")
                 try:
-                    cell.width = Cm(0.75)
+                    cell.width = Cm(0.64)
                 except Exception:
                     pass
 
@@ -1014,11 +1015,18 @@ def restore_record_stage_cells_layout(table) -> None:
                     p.alignment = 1
                     p.paragraph_format.space_before = Pt(0)
                     p.paragraph_format.space_after = Pt(0)
-                    p.paragraph_format.line_spacing = 1
+                    p.paragraph_format.line_spacing = Pt(10)
                 except Exception:
                     pass
-                run = p.add_run(text)
-                set_run_font_kai(run)
+                for idx, char in enumerate(text):
+                    run = p.add_run(char)
+                    set_run_font_kai(run)
+                    try:
+                        run.font.size = Pt(10)
+                    except Exception:
+                        pass
+                    if idx < len(text) - 1:
+                        run.add_break()
     except Exception:
         pass
 
@@ -1037,6 +1045,7 @@ def optimize_record_table_output_layout(doc, table) -> None:
     try:
         set_record_page_small_margins(doc)
         force_record_table_fit_one_page(doc, table)
+        restore_record_stage_cells_layout(table)
     except Exception:
         pass
 
