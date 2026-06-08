@@ -1036,7 +1036,6 @@ def optimize_record_table_output_layout(doc, table) -> None:
     """
     try:
         set_record_page_small_margins(doc)
-        restore_record_stage_cells_layout(table)
         force_record_table_fit_one_page(doc, table)
     except Exception:
         pass
