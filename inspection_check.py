@@ -968,7 +968,7 @@ def restore_record_stage_cells_layout(table) -> None:
     seen_cells: set[int] = set()
 
     try:
-        from docx.shared import Pt
+        from docx.shared import Cm, Pt
 
         for row in table.rows:
             for cell in row.cells:
@@ -988,8 +988,19 @@ def restore_record_stage_cells_layout(table) -> None:
                         parent.remove(old)
 
                 text_direction = OxmlElement("w:textDirection")
-                text_direction.set(qn("w:val"), "lrTb")
+                text_direction.set(qn("w:val"), "tbRlV")
                 tc_pr.append(text_direction)
+
+                tc_w = tc_pr.find(qn("w:tcW"))
+                if tc_w is None:
+                    tc_w = OxmlElement("w:tcW")
+                    tc_pr.append(tc_w)
+                tc_w.set(qn("w:type"), "dxa")
+                tc_w.set(qn("w:w"), "420")
+                try:
+                    cell.width = Cm(0.75)
+                except Exception:
+                    pass
 
                 v_align = tc_pr.find(qn("w:vAlign"))
                 if v_align is None:
@@ -998,21 +1009,16 @@ def restore_record_stage_cells_layout(table) -> None:
                 v_align.set(qn("w:val"), "center")
 
                 clear_cell(cell)
-                first_p = cell.paragraphs[0]
-                paragraphs = [first_p]
-                for _ in text[1:]:
-                    paragraphs.append(cell.add_paragraph())
-
-                for p, ch in zip(paragraphs, text):
-                    try:
-                        p.alignment = 1
-                        p.paragraph_format.space_before = Pt(0)
-                        p.paragraph_format.space_after = Pt(0)
-                        p.paragraph_format.line_spacing = 1
-                    except Exception:
-                        pass
-                    run = p.add_run(ch)
-                    set_run_font_kai(run)
+                p = cell.paragraphs[0]
+                try:
+                    p.alignment = 1
+                    p.paragraph_format.space_before = Pt(0)
+                    p.paragraph_format.space_after = Pt(0)
+                    p.paragraph_format.line_spacing = 1
+                except Exception:
+                    pass
+                run = p.add_run(text)
+                set_run_font_kai(run)
     except Exception:
         pass
 
