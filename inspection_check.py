@@ -968,6 +968,8 @@ def restore_record_stage_cells_layout(table) -> None:
     seen_cells: set[int] = set()
 
     try:
+        from docx.shared import Pt
+
         for row in table.rows:
             for cell in row.cells:
                 cell_id = id(cell._tc)
@@ -975,13 +977,19 @@ def restore_record_stage_cells_layout(table) -> None:
                     continue
                 seen_cells.add(cell_id)
 
-                text = normalize_text(cell.text).replace(" ", "")
+                text = re.sub(r"\s+", "", normalize_text(cell.text))
                 if text not in stage_labels:
                     continue
 
                 tc_pr = cell._tc.get_or_add_tcPr()
-                for old in list(tc_pr.findall(qn("w:textDirection"))):
-                    tc_pr.remove(old)
+                for old in list(cell._tc.iter(qn("w:textDirection"))):
+                    parent = old.getparent()
+                    if parent is not None:
+                        parent.remove(old)
+
+                text_direction = OxmlElement("w:textDirection")
+                text_direction.set(qn("w:val"), "lrTb")
+                tc_pr.append(text_direction)
 
                 v_align = tc_pr.find(qn("w:vAlign"))
                 if v_align is None:
@@ -989,17 +997,22 @@ def restore_record_stage_cells_layout(table) -> None:
                     tc_pr.append(v_align)
                 v_align.set(qn("w:val"), "center")
 
-                cell.text = "\n".join(text)
-                for p in cell.paragraphs:
+                clear_cell(cell)
+                first_p = cell.paragraphs[0]
+                paragraphs = [first_p]
+                for _ in text[1:]:
+                    paragraphs.append(cell.add_paragraph())
+
+                for p, ch in zip(paragraphs, text):
                     try:
                         p.alignment = 1
+                        p.paragraph_format.space_before = Pt(0)
+                        p.paragraph_format.space_after = Pt(0)
+                        p.paragraph_format.line_spacing = 1
                     except Exception:
                         pass
-                    for run in p.runs:
-                        try:
-                            set_run_font_kai(run)
-                        except Exception:
-                            pass
+                    run = p.add_run(ch)
+                    set_run_font_kai(run)
     except Exception:
         pass
 
