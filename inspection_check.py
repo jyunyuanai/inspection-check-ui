@@ -983,21 +983,23 @@ def restore_record_stage_cells_layout(table) -> None:
                 for old in list(tc_pr.findall(qn("w:textDirection"))):
                     tc_pr.remove(old)
 
-                text_direction = OxmlElement("w:textDirection")
-                text_direction.set(qn("w:val"), "tbRlV")
-                tc_pr.append(text_direction)
-
                 v_align = tc_pr.find(qn("w:vAlign"))
                 if v_align is None:
                     v_align = OxmlElement("w:vAlign")
                     tc_pr.append(v_align)
                 v_align.set(qn("w:val"), "center")
 
+                cell.text = "\n".join(text)
                 for p in cell.paragraphs:
                     try:
                         p.alignment = 1
                     except Exception:
                         pass
+                    for run in p.runs:
+                        try:
+                            set_run_font_kai(run)
+                        except Exception:
+                            pass
     except Exception:
         pass
 
