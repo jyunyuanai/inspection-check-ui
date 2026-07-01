@@ -7,3 +7,4 @@ UI匯入照片暫存/
 抽查紀錄表樣板/
 *.sqlite
 輸入記憶.json
+.claude/

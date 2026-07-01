@@ -2592,6 +2592,23 @@ def prepare_image(path: Path, rotate_angle: int = 0) -> BytesIO:
     bio.seek(0)
     return bio
 
+def blank_photo_block(table, block_index: int) -> None:
+    """把某個照片區塊留成空白：保留日期／檢查項目／設計值／實測值的欄位標題文字，
+    但不填任何數值，照片格也留空。方便日後在 Word 裡手動補資料。"""
+    if block_index == 0:
+        row_date, row_item, row_value, row_photo = 0, 1, 2, 3
+        design_col, actual_col = 0, 2
+    else:
+        row_date, row_item, row_value, row_photo = 4, 5, 6, 7
+        design_col, actual_col = 0, 1
+
+    set_cell(table.cell(row_date, 0), "日期：")
+    set_cell(table.cell(row_item, 0), "檢查項目：")
+    set_cell(table.cell(row_value, design_col), "設計值：")
+    set_cell(table.cell(row_value, actual_col), "實測值：")
+    clear_cell(table.cell(row_photo, 0))
+
+
 def fill_photo_block(table, block_index: int, row: pd.Series) -> None:
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.shared import Inches
@@ -2762,7 +2779,9 @@ def create_photo_word(df: pd.DataFrame, output_file_name: str = '', base_photo_w
                     _, row2 = chunk[1]
                     fill_photo_block(table, 1, row2)
                 else:
-                    remove_table_rows(table, 4)
+                    # 只有一張照片時，下半格保留成完全空白的表格，
+                    # 方便日後在 Word 裡手動補照片或資料。
+                    blank_photo_block(table, 1)
             else:
                 doc.add_paragraph(f"日期：{row1.get('日期', '')}")
                 doc.add_paragraph(f"檢查項目：{row1.get('檢查項目', '')}")
@@ -2864,9 +2883,14 @@ def append_uploaded_photo_to_df(uploaded_file: Any, project: str, location: str,
     if not paths:
         return
 
+    # 只用使用者原始上傳檔名判斷日期；存檔檔名開頭是我們自己加的今天時間戳
+    # （例如 20260701_...），不可以拿來當白板日期，否則會每張都變成今天。
+    original_upload_name = str(getattr(uploaded_file, "name", "") or "")
+    date_from_original_name = parse_date_from_text(original_upload_name)
+
     rows = []
     for path in paths:
-        date_from_name = parse_date_from_text(path.name) or parse_date_from_folder(path)
+        date_from_name = date_from_original_name
 
         rows.append({
             "輸出": True,
@@ -3044,6 +3068,7 @@ def render_photo_slot(edited: pd.DataFrame, row_idx: int, slot_key: str) -> pd.D
     key_base = f"{slot_key}_{row_idx}_{str(row.get('圖片雜湊', ''))[:8]}"
 
     with st.container(border=True):
+        st.markdown(f"**照片 #{row_idx + 1}**")
         rotate_angle = normalize_rotation(row.get("旋轉角度", 0))
 
         if img_path.exists():
@@ -3088,17 +3113,19 @@ def render_photo_slot(edited: pd.DataFrame, row_idx: int, slot_key: str) -> pd.D
                 st.warning("尚未找到此工項的 Word 樣本，請先在左側匯入本案抽查紀錄表 Word。")
 
         current_date = str(row.get("日期", "") or "")
-        default_pick = roc_text_to_date(current_date) if current_date else date.today()
+        default_pick = roc_text_to_date(current_date) if current_date else None
 
         # 第九十八版：
         # 移除額外確認按鈕。
         # 直接使用 Streamlit 原生日期欄位：點日期欄位會開月曆，選完日期就立即套用。
+        # 第一百零一版：日期欄位不再預設今天，避免使用者忘記手動選白板日期時
+        # 誤用今天日期；欄位留空會強制使用者自己選擇。
         picked_date = st.date_input(
             "日期",
             value=default_pick,
             key=f"{key_base}_date_picker_direct",
         )
-        date_value = date_to_roc_text(picked_date)
+        date_value = date_to_roc_text(picked_date) if picked_date else ""
 
         # 第一百版：畫面只保留使用者原本要填的欄位，不再新增額外控制項。
         item_value = st.text_area(
@@ -3560,6 +3587,15 @@ def main() -> None:
     selected_count = int(edited["輸出"].fillna(False).sum())
     st.write(f"目前勾選輸出照片：**{selected_count}** 張")
 
+    selected_mask = edited["輸出"].fillna(False) == True
+    missing_date_rows = edited[selected_mask & (edited["日期"].fillna("").astype(str).str.strip() == "")]
+    has_missing_date = len(missing_date_rows) > 0
+    missing_photo_numbers = [idx + 1 for idx in missing_date_rows.index.tolist()]
+
+    missing_item_rows = edited[selected_mask & (edited["抽查表工項"].fillna("").astype(str).str.strip() == "")]
+    has_missing_item = len(missing_item_rows) > 0
+    missing_item_numbers = [idx + 1 for idx in missing_item_rows.index.tolist()]
+
     c1, c2, c3 = st.columns([1, 1, 1])
 
     with c1:
@@ -3575,6 +3611,18 @@ def main() -> None:
     if make_words:
         if selected_count == 0:
             st.error("至少要勾選一張照片才能產出 Word。")
+        elif has_missing_date:
+            numbers_text = "、".join(f"照片 #{n}" for n in missing_photo_numbers)
+            st.error(
+                f"無法產出：以下 {len(missing_photo_numbers)} 張照片還沒選日期，"
+                f"請回到上面對應編號的照片把日期填好後再按產出 Word。\n\n未填日期：{numbers_text}"
+            )
+        elif has_missing_item:
+            numbers_text = "、".join(f"照片 #{n}" for n in missing_item_numbers)
+            st.error(
+                f"無法產出：以下 {len(missing_item_numbers)} 張照片還沒選抽查表工項，"
+                f"請回到上面對應編號的照片把抽查表工項選好後再按產出 Word。\n\n未選抽查表工項：{numbers_text}"
+            )
         else:
             project_value = str(st.session_state.get("project_name", "") or project or "").strip()
             location_value = str(st.session_state.get("project_location", "") or location or "").strip()
