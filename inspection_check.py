@@ -190,13 +190,6 @@ def clear_upload_cache_files() -> None:
     clear_directory_contents(upload_cache_dir())
 
 
-def clear_word_image_work_files() -> None:
-    """
-    清空 Word 產圖暫存。
-    """
-    clear_directory_contents(image_work_dir())
-
-
 def clear_current_case_files() -> None:
     """
     第九十八版：
@@ -412,14 +405,6 @@ def parse_date_from_text(text: str) -> str:
         if 1 <= month <= 12 and 1 <= day <= 31:
             return f"{roc_year}年{month}月{day}日"
 
-    return ""
-
-
-def parse_date_from_folder(path: Path) -> str:
-    for part in reversed(path.parts):
-        d = parse_date_from_text(part)
-        if d:
-            return d
     return ""
 
 
@@ -865,30 +850,6 @@ def remove_page_breaks_from_xml(root) -> None:
         pass
 
 
-def set_table_cell_margins(table, margin_twips: int = 18) -> None:
-    """
-    壓縮 Word 表格儲存格內距。
-    margin_twips 越小越省高度；18 twips 約 0.03 公分。
-    """
-    try:
-        for row in table.rows:
-            for cell in row.cells:
-                tc_pr = cell._tc.get_or_add_tcPr()
-                tc_mar = tc_pr.find(qn("w:tcMar"))
-                if tc_mar is None:
-                    tc_mar = OxmlElement("w:tcMar")
-                    tc_pr.append(tc_mar)
-                for side in ["top", "left", "bottom", "right"]:
-                    node = tc_mar.find(qn(f"w:{side}"))
-                    if node is None:
-                        node = OxmlElement(f"w:{side}")
-                        tc_mar.append(node)
-                    node.set(qn("w:w"), str(margin_twips))
-                    node.set(qn("w:type"), "dxa")
-    except Exception:
-        pass
-
-
 def set_record_page_small_margins(doc) -> None:
     """
     抽查紀錄表輸出專用：把 A4 頁邊界縮小，增加可用高度與寬度。
@@ -904,22 +865,6 @@ def set_record_page_small_margins(doc) -> None:
             section.right_margin = Cm(0.8)
             section.header_distance = Cm(0.3)
             section.footer_distance = Cm(0.3)
-    except Exception:
-        pass
-
-
-def force_table_width_percent(table, percent: int = 100) -> None:
-    """
-    讓抽查表盡量吃滿頁面寬度，減少文字換行造成的高度。
-    """
-    try:
-        tbl_pr = table._tbl.tblPr
-        tbl_w = tbl_pr.find(qn("w:tblW"))
-        if tbl_w is None:
-            tbl_w = OxmlElement("w:tblW")
-            tbl_pr.append(tbl_w)
-        tbl_w.set(qn("w:type"), "pct")
-        tbl_w.set(qn("w:w"), str(percent * 50))
     except Exception:
         pass
 
@@ -1182,34 +1127,6 @@ def compact_single_line_value(value: str) -> str:
     return value
 
 
-def get_cell_first_run_size(cell):
-    """
-    讀取原儲存格第一個 run 的字級。
-    若樣本原本沒有直接字級，回傳 None。
-    """
-    try:
-        for p in cell.paragraphs:
-            for r in p.runs:
-                if r.font.size is not None:
-                    return r.font.size
-    except Exception:
-        pass
-    return None
-
-
-def remove_extra_cell_paragraphs(cell) -> None:
-    """
-    儲存格只留第一個段落。
-    多餘段落會讓列高變高，可能導致抽查表最後一列跑到第二頁。
-    """
-    try:
-        paragraphs = list(cell.paragraphs)
-        for p in paragraphs[1:]:
-            p._element.getparent().remove(p._element)
-    except Exception:
-        pass
-
-
 def replace_value_to_cell(cell, value: str) -> None:
     """
     第九十八版：保留樣板原格式，只取代文字。
@@ -1312,59 +1229,6 @@ def replace_neighbor_cell_by_label(table, labels: list[str], value: str) -> bool
             return True
 
     return False
-
-
-def fill_neighbor_cell_by_label(table, labels: list[str], value: str) -> bool:
-    """
-    在複製出來的抽查表裡，找到含有標籤的格子，優先填到右邊空格。
-    例如：工程名稱 | ______  或 抽查日期 | ______。
-    """
-    value = str(value or "").strip()
-    if not value:
-        return False
-
-    for row in table.rows:
-        cells = list(row.cells)
-        for idx, cell in enumerate(cells):
-            text = normalize_text(cell.text)
-            if not any(label in text for label in labels):
-                continue
-
-            # 優先填右邊不同 XML cell，避免 merged cell 重複。
-            for j in range(idx + 1, len(cells)):
-                if cells[j]._tc is not cell._tc:
-                    append_value_to_cell(cells[j], value)
-                    return True
-
-            append_value_to_cell(cell, value)
-            return True
-
-    return False
-
-
-def compact_record_table_paragraphs(table) -> None:
-    """
-    壓縮抽查表表格內段落間距。
-    不改表格結構，只處理段落空白，避免輸出時多出一頁。
-    """
-    from docx.shared import Pt
-
-    try:
-        seen = set()
-        for r in table.rows:
-            for cell in r.cells:
-                if id(cell._tc) in seen:
-                    continue
-                seen.add(id(cell._tc))
-                for p in cell.paragraphs:
-                    try:
-                        p.paragraph_format.space_before = Pt(0)
-                        p.paragraph_format.space_after = Pt(0)
-                        p.paragraph_format.line_spacing = 1
-                    except Exception:
-                        pass
-    except Exception:
-        pass
 
 
 def fill_selected_record_table(table, row: pd.Series) -> None:
@@ -2300,28 +2164,6 @@ def safe_output_name(name: str, default_name: str = "工程抽查照片_UI版") 
     return text
 
 
-def make_timestamped_output_path(prefix: str, suffix: str = ".docx") -> Path:
-    """
-    第九十八版：
-    每次輸出新檔名，避免 Word 正在開啟舊檔時 Permission denied。
-    prefix 可由使用者在左側「檔案名稱」輸入。
-    """
-    output_dir().mkdir(parents=True, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    safe_prefix = safe_output_name(prefix)
-    return output_dir() / f"{safe_prefix}_{ts}{suffix}"
-
-
-def make_timestamped_download_name(prefix: str, suffix: str = ".docx") -> str:
-    """
-    第九十八版：
-    只產生下載用檔名，不寫入輸出資料夾。
-    """
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    safe_prefix = safe_output_name(prefix)
-    return f"{safe_prefix}_{ts}{suffix}"
-
-
 def make_labeled_download_name(user_prefix: str, label: str, suffix: str = ".docx") -> str:
     prefix = safe_output_name(user_prefix, "").strip()
     label = safe_output_name(label, "Word").strip()
@@ -2547,13 +2389,6 @@ def append_table_from_template(doc, template_tbl_xml):
         body.append(new_tbl_xml)
 
     return Table(new_tbl_xml, doc)
-
-
-def remove_table_rows(table, start_index: int) -> None:
-    tbl = table._tbl
-    rows = list(tbl.tr_lst)
-    for tr in rows[start_index:]:
-        tbl.remove(tr)
 
 
 def prepare_image(path: Path, rotate_angle: int = 0) -> BytesIO:
@@ -3263,11 +3098,6 @@ def read_output_file_bytes(path_str: str, mtime_ns: int, file_size: int) -> byte
     return Path(path_str).read_bytes()
 
 
-def get_output_file_bytes(path: Path) -> bytes:
-    stat = path.stat()
-    return read_output_file_bytes(str(path), stat.st_mtime_ns, stat.st_size)
-
-
 def set_last_generated_words(photo_word: dict[str, Any], record_words: list[dict[str, Any]], missing_record_templates: list[str]) -> None:
     """
     第九十八版：
@@ -3606,7 +3436,6 @@ def main() -> None:
 
     with c3:
         st.caption("本版只輸出 Word，不產生 Excel / ZIP。")
-        export_xlsx = False
 
     if make_words:
         if selected_count == 0:
