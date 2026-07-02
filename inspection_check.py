@@ -1127,13 +1127,13 @@ def compact_single_line_value(value: str) -> str:
     return value
 
 
-def replace_value_to_cell(cell, value: str) -> None:
+def replace_value_to_cell(cell, value: str, force_font: str | None = None) -> None:
     """
     第九十八版：保留樣板原格式，只取代文字。
 
     重點：
     - 不改字級
-    - 不改字型
+    - 不改字型（除非呼叫端明確指定 force_font）
     - 不改段落行距
     - 不改表格寬度 / 列高 / 頁邊界
     - 盡量沿用原本儲存格第一個 run 的格式
@@ -1160,13 +1160,17 @@ def replace_value_to_cell(cell, value: str) -> None:
         for extra_p in cell.paragraphs[1:]:
             for r in extra_p.runs:
                 r.text = ""
+
+        if force_font:
+            for run in p.runs:
+                set_run_font_kai(run, force_font)
     except Exception:
         try:
             cell.text = value
         except Exception:
             pass
 
-def replace_value_in_same_label_cell(cell, label: str, value: str) -> None:
+def replace_value_in_same_label_cell(cell, label: str, value: str, force_font: str | None = None) -> None:
     """
     有些 Word 表格可能是同一格寫：工程名稱：舊名稱。
     沒有右邊空格時，保留標籤，把標籤後面的內容取代成新值。
@@ -1183,10 +1187,10 @@ def replace_value_in_same_label_cell(cell, label: str, value: str) -> None:
     else:
         new_text = value
 
-    replace_value_to_cell(cell, new_text)
+    replace_value_to_cell(cell, new_text, force_font=force_font)
 
 
-def replace_neighbor_cell_by_label(table, labels: list[str], value: str) -> bool:
+def replace_neighbor_cell_by_label(table, labels: list[str], value: str, force_font: str | None = None) -> bool:
     """
     找到含有標籤的格子，優先把右邊空格「整格取代」成 value。
     若沒有右邊空格，才取代同一格標籤後面的內容。
@@ -1221,11 +1225,11 @@ def replace_neighbor_cell_by_label(table, labels: list[str], value: str) -> bool
             # 優先填右邊不同 XML cell，避免 merged cell 重複。
             for j in range(idx + 1, len(cells)):
                 if cells[j]._tc is not cell._tc:
-                    replace_value_to_cell(cells[j], value)
+                    replace_value_to_cell(cells[j], value, force_font=force_font)
                     return True
 
             # 若沒有右邊空格，只好同格取代。
-            replace_value_in_same_label_cell(cell, matched_label, value)
+            replace_value_in_same_label_cell(cell, matched_label, value, force_font=force_font)
             return True
 
     return False
@@ -1252,7 +1256,8 @@ def fill_selected_record_table(table, row: pd.Series) -> None:
     if contractor:
         # 優先找施工廠商欄位；部分表格可能寫成承攬廠商或廠商。
         # 注意：「廠商」只用於施工廠商，不碰工程名稱。
-        replace_neighbor_cell_by_label(table, ["施工廠商", "承攬廠商", "廠商"], contractor)
+        # 施工廠商一律套用標楷體，不沿用樣板原字型。
+        replace_neighbor_cell_by_label(table, ["施工廠商", "承攬廠商", "廠商"], contractor, force_font="標楷體")
 
     # 重要：不要在這裡壓縮字級、行距、列高或表格寬度。
     # 抽查紀錄表必須照使用者提供的 Word 樣板原格式輸出。
@@ -2444,7 +2449,12 @@ def blank_photo_block(table, block_index: int) -> None:
     clear_cell(table.cell(row_photo, 0))
 
 
-def fill_photo_block(table, block_index: int, row: pd.Series) -> None:
+def fill_photo_block(table, block_index: int, row: pd.Series) -> int | None:
+    """
+    填完這個照片區塊後，回傳「設計值/實測值那一列」的列索引；
+    若該列兩個值都沒填，呼叫端稍後會把這個索引整列從表格刪除。
+    回傳 None 代表這一列有值，不需要刪除。
+    """
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.shared import Inches
 
@@ -2455,10 +2465,14 @@ def fill_photo_block(table, block_index: int, row: pd.Series) -> None:
         row_date, row_item, row_value, row_photo = 4, 5, 6, 7
         design_col, actual_col = 0, 1
 
+    design_text = str(row.get("設計值", "") or "").strip()
+    actual_text = str(row.get("實測值", "") or "").strip()
+
     set_cell(table.cell(row_date, 0), f"日期：{row.get('日期', '')}")
     set_cell(table.cell(row_item, 0), f"檢查項目：{row.get('檢查項目', '')}")
-    set_cell(table.cell(row_value, design_col), f"設計值：{row.get('設計值', '')}")
-    set_cell(table.cell(row_value, actual_col), f"實測值：{row.get('實測值', '')}")
+    # 沒有填設計值/實測值時（例如材料進場照片），Word 裡不顯示這兩個欄位標籤。
+    set_cell(table.cell(row_value, design_col), f"設計值：{design_text}" if design_text else "")
+    set_cell(table.cell(row_value, actual_col), f"實測值：{actual_text}" if actual_text else "")
 
     photo_cell = table.cell(row_photo, 0)
     clear_cell(photo_cell)
@@ -2472,6 +2486,15 @@ def fill_photo_block(table, block_index: int, row: pd.Series) -> None:
 
     img_stream = prepare_image(Path(str(row.get("照片路徑", ""))), int(row.get("旋轉角度", 0) or 0))
     p.add_run().add_picture(img_stream, width=Inches(6.15))
+
+    return row_value if not design_text and not actual_text else None
+
+
+def remove_table_row_at(table, row_index: int) -> None:
+    tbl = table._tbl
+    rows = list(tbl.tr_lst)
+    if 0 <= row_index < len(rows):
+        tbl.remove(rows[row_index])
 
 
 def set_template_header(doc, project: str, location: str) -> None:
@@ -2608,19 +2631,37 @@ def create_photo_word(df: pd.DataFrame, output_file_name: str = '', base_photo_w
 
             if template_tbl_xml is not None:
                 table = append_table_from_template(doc, template_tbl_xml)
-                fill_photo_block(table, 0, row1)
+                rows_to_remove = []
+
+                empty_value_row = fill_photo_block(table, 0, row1)
+                if empty_value_row is not None:
+                    rows_to_remove.append(empty_value_row)
 
                 if len(chunk) >= 2:
                     _, row2 = chunk[1]
-                    fill_photo_block(table, 1, row2)
+                    empty_value_row = fill_photo_block(table, 1, row2)
+                    if empty_value_row is not None:
+                        rows_to_remove.append(empty_value_row)
                 else:
                     # 只有一張照片時，下半格保留成完全空白的表格，
                     # 方便日後在 Word 裡手動補照片或資料。
                     blank_photo_block(table, 1)
+
+                # 由列索引大到小刪，避免刪除前面的列導致後面列索引跑掉。
+                for row_index in sorted(rows_to_remove, reverse=True):
+                    remove_table_row_at(table, row_index)
             else:
+                design_text = str(row1.get("設計值", "") or "").strip()
+                actual_text = str(row1.get("實測值", "") or "").strip()
                 doc.add_paragraph(f"日期：{row1.get('日期', '')}")
                 doc.add_paragraph(f"檢查項目：{row1.get('檢查項目', '')}")
-                doc.add_paragraph(f"設計值：{row1.get('設計值', '')}　實測值：{row1.get('實測值', '')}")
+                value_parts = []
+                if design_text:
+                    value_parts.append(f"設計值：{design_text}")
+                if actual_text:
+                    value_parts.append(f"實測值：{actual_text}")
+                if value_parts:
+                    doc.add_paragraph("　".join(value_parts))
                 doc.add_picture(prepare_image(Path(str(row1.get("照片路徑", ""))), int(row1.get("旋轉角度", 0) or 0)))
 
             page_count += 1
