@@ -22,7 +22,7 @@ from docx.oxml import OxmlElement
 
 
 # ============================================================
-# 工程抽查 UI 工具 - 第九十九版
+# 工程抽查 UI 工具
 #
 # 目標：
 # 1. 使用者把照片直接拖進照片表格
@@ -39,7 +39,6 @@ BASE_DIR = Path(__file__).resolve().parent
 
 PHOTO_TEMPLATE_DIR = BASE_DIR / "工程抽查照片樣板"
 DEFAULT_RECORD_TEMPLATE_DIR = BASE_DIR / "抽查紀錄表樣板"
-DEFAULT_OUTPUT_DIR = BASE_DIR / "輸出"
 DEFAULT_UPLOAD_CACHE_DIR = BASE_DIR / "UI匯入照片暫存"
 RUNTIME_ROOT_DIR = BASE_DIR / ".streamlit_runtime"
 
@@ -63,14 +62,6 @@ def supports_legacy_doc_conversion() -> bool:
     return os.name == "nt" or find_libreoffice_binary() is not None
 
 
-def allowed_record_doc_exts() -> set[str]:
-    return DOC_EXTS
-
-
-def allowed_record_upload_types() -> list[str]:
-    return ["doc", "docx"]
-
-
 def ensure_session_runtime_paths() -> None:
     """
     每個瀏覽器 session 使用自己的暫存、輸出、抽查表樣板資料夾。
@@ -84,69 +75,33 @@ def ensure_session_runtime_paths() -> None:
 
     st.session_state["runtime_root_dir"] = str(session_root)
     st.session_state["record_template_dir"] = str(session_root / "抽查紀錄表樣板")
-    st.session_state["output_dir"] = str(session_root / "輸出")
     st.session_state["upload_cache_dir"] = str(session_root / "UI匯入照片暫存")
-    st.session_state["image_work_dir"] = str(session_root / "輸出" / "_ui_word_images")
 
 
 def record_template_dir() -> Path:
     return Path(str(st.session_state.get("record_template_dir", DEFAULT_RECORD_TEMPLATE_DIR)))
 
 
-def output_dir() -> Path:
-    return Path(str(st.session_state.get("output_dir", DEFAULT_OUTPUT_DIR)))
-
-
 def upload_cache_dir() -> Path:
     return Path(str(st.session_state.get("upload_cache_dir", DEFAULT_UPLOAD_CACHE_DIR)))
 
 
-def image_work_dir() -> Path:
-    return Path(str(st.session_state.get("image_work_dir", output_dir() / "_ui_word_images")))
-
-
-def cleanup_unused_project_folders() -> None:
-    """
-    第九十八版：
-    使用者確認照片暫存要放回專案資料夾內，方便查找。
-
-    仍不再主動建立：
-    - 原始照片
-    - 正確範本
-
-    這兩個資料夾只有在空資料夾時才刪除；若裡面有檔案，保留避免誤刪。
-    """
-    for name in ["原始照片", "正確範本"]:
-        p = BASE_DIR / name
-        if p.exists() and p.is_dir():
-            try:
-                if not any(p.iterdir()):
-                    p.rmdir()
-            except Exception:
-                pass
-
-
 def init_dirs() -> None:
-    # 保留目前必要資料夾，照片暫存也放回專案資料夾。
-    for folder in [PHOTO_TEMPLATE_DIR, record_template_dir(), output_dir(), upload_cache_dir(), image_work_dir()]:
+    # Word 只在記憶體產生供下載，不需要輸出資料夾。
+    for folder in [PHOTO_TEMPLATE_DIR, record_template_dir(), upload_cache_dir()]:
         folder.mkdir(parents=True, exist_ok=True)
-
-    cleanup_unused_project_folders()
 
 
 def is_safe_managed_dir(folder: Path) -> bool:
     """
-    只允許清理程式自己管理的三個資料夾：
+    只允許清理程式自己管理的資料夾：
     - UI匯入照片暫存
-    - 輸出
-    - 輸出/_ui_word_images
+    - 抽查紀錄表樣板
     """
     try:
         folder = folder.resolve()
         allowed = {
             upload_cache_dir().resolve(),
-            output_dir().resolve(),
-            image_work_dir().resolve(),
             record_template_dir().resolve(),
         }
         return folder in allowed
@@ -174,32 +129,11 @@ def clear_directory_contents(folder: Path) -> None:
             pass
 
 
-def clear_output_runtime_files() -> None:
-    """
-    產出 Word 前清空輸出資料夾。
-    目的：輸出資料夾只保留本次最新 Word，不再越堆越多。
-    """
-    clear_directory_contents(output_dir())
-    image_work_dir().mkdir(parents=True, exist_ok=True)
-
-
-def clear_upload_cache_files() -> None:
-    """
-    清空 UI 匯入照片暫存。
-    """
-    clear_directory_contents(upload_cache_dir())
-
-
 def clear_current_case_files() -> None:
     """
-    第九十八版：
-    切換新案件時，把會累積的資料夾用取代方式清掉：
-    - UI匯入照片暫存
-    - 輸出
-    - 輸出/_ui_word_images
+    切換新案件時，清空 UI匯入照片暫存。
     """
-    clear_upload_cache_files()
-    clear_output_runtime_files()
+    clear_directory_contents(upload_cache_dir())
 
 
 def reset_current_case_state() -> None:
@@ -258,39 +192,41 @@ def file_hash(path: Path) -> str:
     return h.hexdigest()
 
 
+# 全形 / 單位統一。順序有意義，依序取代。
+TEXT_REPLACEMENTS = {
+    "：": ":",
+    "，": ",",
+    "。": ".",
+    "　": " ",
+    "／": "/",
+    "－": "-",
+    "—": "-",
+    "～": "~",
+    "㎝": "cm",
+    "ＣＭ": "cm",
+    "ｃｍ": "cm",
+    "公分": "cm",
+    "厘米": "cm",
+    "０": "0",
+    "１": "1",
+    "２": "2",
+    "３": "3",
+    "４": "4",
+    "５": "5",
+    "６": "6",
+    "７": "7",
+    "８": "8",
+    "９": "9",
+    "Ｏ": "0",
+    "ｏ": "0",
+}
+
+
 def normalize_text(text: str) -> str:
     if not text:
         return ""
 
-    replacements = {
-        "：": ":",
-        "，": ",",
-        "。": ".",
-        "　": " ",
-        "／": "/",
-        "－": "-",
-        "—": "-",
-        "～": "~",
-        "㎝": "cm",
-        "ＣＭ": "cm",
-        "ｃｍ": "cm",
-        "公分": "cm",
-        "厘米": "cm",
-        "０": "0",
-        "１": "1",
-        "２": "2",
-        "３": "3",
-        "４": "4",
-        "５": "5",
-        "６": "6",
-        "７": "7",
-        "８": "8",
-        "９": "9",
-        "Ｏ": "0",
-        "ｏ": "0",
-    }
-
-    for k, v in replacements.items():
+    for k, v in TEXT_REPLACEMENTS.items():
         text = text.replace(k, v)
 
     text = re.sub(r"A\s*[O0]\s*K", "A0K", text, flags=re.IGNORECASE)
@@ -317,7 +253,6 @@ def normalize_text(text: str) -> str:
 
 def natural_sort_text(value: str) -> str:
     """
-    第九十八版：
     補回自然排序函式，修正產出 Word 時：
     NameError: name 'natural_sort_text' is not defined
 
@@ -341,7 +276,6 @@ def natural_sort_text(value: str) -> str:
 
 def parse_date_from_text(text: str) -> str:
     """
-    第九十八版：
     修正照片右下角 2026/5/21 被誤判成 126年5月21日的問題。
 
     支援：
@@ -410,7 +344,6 @@ def parse_date_from_text(text: str) -> str:
 
 def roc_date_sort_value(value: str) -> int:
     """
-    第九十八版：
     Word 輸出時依日期排序。
     支援民國與西元日期。
     """
@@ -469,7 +402,6 @@ def clean_photo_work_item_label(value: Any) -> str:
 
 def photo_word_work_item_label(row: pd.Series) -> str:
     """
-    第九十八版：
     工程抽查照片 Word 分頁用工項。
 
     修正：
@@ -477,10 +409,10 @@ def photo_word_work_item_label(row: pd.Series) -> str:
     這會造成同一天、同一類工程的兩張照片，只因檢查項目文字不同就被拆成兩頁。
 
     現在改成：
-    1. 有選抽查表工項 / 抽查表名稱 / 對應表單 → 依該工項分頁。
+    1. 有選抽查表工項 / 抽查表名稱 → 依該工項分頁。
     2. 沒選工項 → 統一視為「未分類」，同日期最多兩張可放同一頁。
     """
-    for key in ["抽查表工項", "抽查表名稱", "對應表單"]:
+    for key in ["抽查表工項", "抽查表名稱"]:
         label = clean_photo_work_item_label(row.get(key, ""))
         if label:
             return label
@@ -490,7 +422,6 @@ def photo_word_work_item_label(row: pd.Series) -> str:
 
 def photo_word_page_group_key(row: pd.Series) -> tuple:
     """
-    第九十八版：
     工程抽查照片 Word 頁面分組規則：
     - 同日期 + 同工項：可以放同一頁，最多兩張
     - 同日期 + 不同工項：分不同頁
@@ -514,34 +445,12 @@ def sort_for_word_output(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     out["_日期排序"] = out["日期"].apply(roc_date_sort_value)
     out["_照片頁面工項排序"] = out.apply(lambda r: natural_sort_text(photo_word_work_item_label(r)), axis=1)
-
-    if "照片分組" in out.columns:
-        out["_分組排序"] = out["照片分組"].astype(str).apply(natural_sort_text)
-    else:
-        out["_分組排序"] = ""
-
     out["_項目排序"] = out["檢查項目"].astype(str).apply(natural_sort_text)
     out["_照片排序"] = out["照片檔名"].astype(str).apply(natural_sort_text)
 
-    out = out.sort_values(
-        ["_日期排序", "_照片頁面工項排序", "_分組排序", "_項目排序", "_照片排序"],
-        ascending=[True, True, True, True, True],
-        kind="mergesort",
-    )
-
-    return out.drop(columns=["_日期排序", "_照片頁面工項排序", "_分組排序", "_項目排序", "_照片排序"], errors="ignore")
-
-
-def extract_group_name(path: Path) -> str:
-    """
-    第九十八版：
-    已取消掃描「原始照片」資料夾。
-    這裡只保留安全的分組名稱判斷；UI 暫存照片不另外分組。
-    """
-    parent = Path(path).parent.name
-    if parent in ["UI匯入照片暫存", "工程抽查UI匯入照片暫存"]:
-        return ""
-    return parent
+    sort_cols = ["_日期排序", "_照片頁面工項排序", "_項目排序", "_照片排序"]
+    out = out.sort_values(sort_cols, kind="mergesort")
+    return out.drop(columns=sort_cols)
 
 
 def table_text(table) -> str:
@@ -629,21 +538,6 @@ def score_record_table_for_row(table, row: pd.Series) -> int:
     return score
 
 
-def find_selected_record_table(template_path: Path, row: pd.Series):
-    """
-    從整份抽查紀錄表 Word 裡，只找出照片卡片所選工項的那一張表。
-    回傳的是來源文件中的 table 物件；找不到時回傳 None。
-    """
-    from docx import Document
-
-    try:
-        src_doc = Document(str(template_path))
-    except Exception:
-        return None
-
-    return find_selected_record_table_in_doc(src_doc, row)
-
-
 def find_selected_record_table_in_doc(doc, row: pd.Series):
     best_table = None
     best_score = -9999
@@ -687,7 +581,6 @@ def keep_only_table_in_document(doc, table) -> None:
 
 def clear_document_body_keep_section(doc) -> None:
     """
-    第九十八版：
     抽查表 Word 要盡量跟原始樣本一樣，不能跑版。
 
     做法：
@@ -706,7 +599,6 @@ def clear_document_body_keep_section(doc) -> None:
 
 def remove_empty_body_paragraphs(doc) -> None:
     """
-    第九十八版：
     工程抽查照片 Word 表格上方不保留多餘空白段落。
     只移除完全空白且沒有圖片/物件的段落，不刪除有文字的抬頭。
     """
@@ -728,7 +620,7 @@ def remove_empty_body_paragraphs(doc) -> None:
 def compact_photo_word_spacing(doc) -> None:
     """
     讓工程抽查照片 Word 抬頭與表格不要空太大。
-    第八十七版修正：補上 Pt 匯入，避免這段因 NameError 被 try/except 吃掉。
+    補上 Pt 匯入，避免這段因 NameError 被 try/except 吃掉。
     """
     from docx.shared import Pt
 
@@ -743,7 +635,6 @@ def compact_photo_word_spacing(doc) -> None:
 
 def force_photo_title_size_16(doc) -> None:
     """
-    第九十八版：
     工程抽查照片標題字大小一律 16pt。
     包含：
     - 程式新增的每頁標題
@@ -765,15 +656,13 @@ def force_photo_title_size_16(doc) -> None:
         pass
 
 
-def append_copied_table(doc, source_table):
+def append_table_xml(doc, tbl_xml):
     """
-    把來源 Word 的單一表格完整複製到新 Word。
+    把表格 XML 完整複製一份，放到文件最後（文件結尾的 sectPr 之前）。
     """
-    from copy import deepcopy
-    from docx.oxml.ns import qn
     from docx.table import Table
 
-    new_tbl = deepcopy(source_table._tbl)
+    new_tbl = deepcopy(tbl_xml)
     body = doc._body._element
     sect_pr = body.find(qn("w:sectPr"))
 
@@ -871,7 +760,7 @@ def set_record_page_small_margins(doc) -> None:
 
 def force_record_table_fit_one_page(doc, table) -> None:
     """
-    第九十八版：保守修正。
+    保守修正。
 
     前一版把抽查表字級與列高硬壓縮，
     會把使用者原本的抽查表格式改壞。
@@ -1095,27 +984,6 @@ def append_page_break_before_next_table(doc) -> None:
         pass
 
 
-def append_value_to_cell(cell, value: str) -> None:
-    value = str(value or "").strip()
-    if not value:
-        return
-
-    current = normalize_text(cell.text)
-    if value in current:
-        return
-
-    try:
-        if current:
-            cell.add_paragraph(value)
-        else:
-            cell.text = value
-    except Exception:
-        try:
-            cell.text = value
-        except Exception:
-            pass
-
-
 def compact_single_line_value(value: str) -> str:
     """
     抽查表欄位取代用：
@@ -1129,7 +997,7 @@ def compact_single_line_value(value: str) -> str:
 
 def replace_value_to_cell(cell, value: str, force_font: str | None = None) -> None:
     """
-    第九十八版：保留樣板原格式，只取代文字。
+    保留樣板原格式，只取代文字。
 
     重點：
     - 不改字級
@@ -1237,7 +1105,6 @@ def replace_neighbor_cell_by_label(table, labels: list[str], value: str, force_f
 
 def fill_selected_record_table(table, row: pd.Series) -> None:
     """
-    第九十八版：
     抽查紀錄表仍然不填：
     日期、檢查項目、設計值、實測值。
 
@@ -1270,7 +1137,6 @@ def create_record_words(
     base_record_word_bytes: bytes | None = None,
 ) -> list[dict[str, Any]]:
     """
-    第九十八版：
     - 支援接續舊抽查紀錄表 Word。
     - 同一天 + 同一個抽查表工項，只輸出一張抽查表。
     - 抽查紀錄表保留樣板字級、行距、列高與表格寬度。
@@ -1278,18 +1144,18 @@ def create_record_words(
     """
     from docx import Document
 
-    selected = df[df["輸出"] == True].copy()
-
-    if selected.empty:
+    if df.empty:
         return []
 
-    selected = sort_for_word_output(selected)
+    selected = sort_for_word_output(df)
     rows_to_output = []
     seen_unique_keys: set[tuple[str, str]] = set()
+    # 同一份樣板 Word 只開一次，不必每個工項都重新讀檔。
+    source_docs: dict[str, Any] = {}
 
     for _, row in selected.iterrows():
         label = str(row.get("抽查表工項", "") or "").strip()
-        template_path = str(row.get("抽查表工項路徑", "") or row.get("抽查表樣本路徑", "") or "").strip()
+        template_path = str(row.get("抽查表工項路徑", "") or "").strip()
 
         if not label or not template_path or not Path(template_path).exists():
             continue
@@ -1299,7 +1165,14 @@ def create_record_words(
             continue
         seen_unique_keys.add(unique_key)
 
-        source_table = find_selected_record_table(Path(template_path), row)
+        if template_path not in source_docs:
+            try:
+                source_docs[template_path] = Document(template_path)
+            except Exception:
+                source_docs[template_path] = None
+
+        src_doc = source_docs[template_path]
+        source_table = find_selected_record_table_in_doc(src_doc, row) if src_doc is not None else None
         if source_table is None:
             try:
                 st.warning(f"找不到 {label} 對應的單張抽查表，已略過該照片。")
@@ -1318,9 +1191,8 @@ def create_record_words(
     if append_to_existing:
         out_doc = Document(BytesIO(base_record_word_bytes))
     else:
-        first_template = Path(str(rows_to_output[0][0].get("抽查表工項路徑", "") or rows_to_output[0][0].get("抽查表樣本路徑", "")))
-        out_doc = Document(str(first_template))
         first_row = rows_to_output[0][0]
+        out_doc = Document(str(first_row.get("抽查表工項路徑", "")))
         first_table = find_selected_record_table_in_doc(out_doc, first_row)
 
         if first_table is not None:
@@ -1338,15 +1210,9 @@ def create_record_words(
             append_page_break_before_next_table(out_doc)
 
         apply_source_table_section_to_doc(out_doc, source_table)
-        new_table = append_copied_table(out_doc, source_table)
+        new_table = append_table_xml(out_doc, source_table._tbl)
         fill_selected_record_table(new_table, row)
         optimize_record_table_output_layout(out_doc, new_table)
-
-    selected_codes = []
-    for row, _table in rows_to_output:
-        code = str(row.get("抽查表編號", "") or record_work_item_code_from_label(str(row.get("抽查表工項", ""))) or "").strip()
-        if code and code not in selected_codes:
-            selected_codes.append(code)
 
     file_name = make_labeled_download_name(output_file_name, "抽查紀錄表")
 
@@ -1450,7 +1316,6 @@ def build_secure_saved_filename(uploaded_name: str, suffix: str, data: bytes, pr
 
 def save_uploaded_files(uploaded_files: list[Any]) -> list[Path]:
     """
-    第九十八版：
     照片上傳安全化：
     - 只允許 IMAGE_EXTS
     - 限制大小
@@ -1483,11 +1348,11 @@ def save_uploaded_files(uploaded_files: list[Any]) -> list[Path]:
 def sanitize_upload_filename(filename: str, default_name: str = "抽查紀錄表樣板") -> str:
     """
     保留給舊函式相容使用。
-    第八十七版主要改由 build_secure_saved_filename 產生安全檔名。
+    主要改由 build_secure_saved_filename 產生安全檔名。
     """
     p = Path(str(filename or default_name))
     suffix = p.suffix.lower()
-    if suffix not in allowed_record_doc_exts():
+    if suffix not in DOC_EXTS:
         suffix = ".docx"
     return f"{safe_upload_stem(filename, default_name)}{suffix}"
 
@@ -1576,7 +1441,6 @@ def convert_doc_to_docx_with_libreoffice(doc_path: Path, docx_path: Path) -> Pat
 
 def convert_doc_to_docx(doc_path: Path) -> Path:
     """
-    第九十八版：
     支援 Word 97-2003 的 .doc 舊格式。
     修正 Streamlit 執行緒使用 Word COM 時出現：
     CoInitialize 尚未被呼叫 / 尚未呼叫 CoInitialize
@@ -1658,7 +1522,6 @@ def convert_doc_to_docx(doc_path: Path) -> Path:
 
 def clear_record_template_dir() -> None:
     """
-    第九十八版：
     每次使用者重新匯入抽查紀錄表 Word，就清空舊樣本。
     這樣不會一直累積重複 Word，選單也不會越來越多、越來越慢。
     """
@@ -1680,7 +1543,6 @@ def record_upload_batch_key(uploaded_files: list[Any]) -> str:
 
 def reset_record_template_uploader() -> None:
     """
-    第九十八版：
     Streamlit 的多檔上傳在 accept_multiple_files=True 時，
     使用者再次按 Upload 可能會把新檔案加到舊清單後面。
     所以抽查紀錄表樣本處理完成後，立刻換 file_uploader key 讓它清空。
@@ -1694,7 +1556,6 @@ def reset_record_template_uploader() -> None:
 
 def save_record_template_files(uploaded_files: list[Any], replace_mode: bool = False) -> list[Path]:
     """
-    第九十八版：
     抽查紀錄表樣本依照「每次匯入的 Word」為準。
 
     修正：
@@ -1722,7 +1583,7 @@ def save_record_template_files(uploaded_files: list[Any], replace_mode: bool = F
 
     for f in uploaded_files:
         try:
-            suffix, data = validate_uploaded_file(f, allowed_record_doc_exts(), MAX_DOC_UPLOAD_BYTES, "抽查紀錄表 Word")
+            suffix, data = validate_uploaded_file(f, DOC_EXTS, MAX_DOC_UPLOAD_BYTES, "抽查紀錄表 Word")
             validate_doc_upload_bytes(data, suffix)
 
             safe_name = build_secure_saved_filename(getattr(f, "name", "record_template"), suffix, data, "record")
@@ -1905,7 +1766,6 @@ def dedupe_work_items_by_code(items: list[dict[str, Any]]) -> list[dict[str, Any
 
 def extract_work_items_from_docx(docx_path: Path) -> list[dict[str, Any]]:
     """
-    第九十八版：
     抽查表工項只依照 Word 裡的「目錄表」產生。
 
     修正前的問題：
@@ -1958,29 +1818,14 @@ def build_dynamic_record_work_items() -> list[dict[str, Any]]:
     真正掃描 Word 的函式。
     注意：只在匯入後或快取不存在時執行，不會每張照片都重掃。
     """
-    all_items: list[dict[str, Any]] = []
-    seen_codes: set[str] = set()
-    seen_labels: set[str] = set()
-
-    for p in list_record_templates():
-        for item in extract_work_items_from_docx(p):
-            label = str(item.get("label", "")).strip()
-            code = str(item.get("code", "")).strip().upper()
-            if not label:
-                continue
-
-            # 工項就是目錄那幾個。
-            # 同一個 B05 / B07 不管名稱略有不同，都只保留第一個。
-            if code:
-                if code in seen_codes:
-                    continue
-                seen_codes.add(code)
-            else:
-                if label in seen_labels:
-                    continue
-                seen_labels.add(label)
-
-            all_items.append(item)
+    # 工項就是目錄那幾個。
+    # 同一個 B05 / B07 不管名稱略有不同，都只保留第一個。
+    all_items = dedupe_work_items_by_code([
+        item
+        for p in list_record_templates()
+        for item in extract_work_items_from_docx(p)
+        if str(item.get("label", "")).strip()
+    ])
 
     def sort_key(item: dict[str, Any]):
         code = str(item.get("code", ""))
@@ -2056,33 +1901,18 @@ def missing_selected_record_templates(df: pd.DataFrame) -> list[str]:
         return []
 
     missing: list[str] = []
-    selected = df[df.get("輸出", True) == True].copy()
 
-    for _, row in selected.iterrows():
+    for _, row in df.iterrows():
         label = str(row.get("抽查表工項", "") or "").strip()
         if not label:
             continue
 
-        path = str(row.get("抽查表工項路徑", "") or row.get("抽查表樣本路徑", "") or "").strip()
+        path = str(row.get("抽查表工項路徑", "") or "").strip()
         if not path or not Path(path).exists():
             if label not in missing:
                 missing.append(label)
 
     return missing
-
-
-# 第九十八版：已移除 自動辨識功能。
-# 使用者改為手動填寫日期、檢查項目、設計值、實測值。
-# 保留後續表單輸出流程，不再呼叫 rapidocr_onnxruntime。
-
-
-def save_user_memory(df: pd.DataFrame) -> None:
-    """
-    第九十八版：
-    自動辨識記憶庫已移除。
-    使用者手動填寫欄位，不新增額外輸入選單。
-    """
-    return
 
 
 def normalize_rotation(value: Any) -> int:
@@ -2099,7 +1929,6 @@ def normalize_rotation(value: Any) -> int:
 @st.cache_data(show_spinner=False, max_entries=512)
 def build_display_image_bytes(path_str: str, rotate_angle: int, mtime_ns: int, file_size: int) -> bytes:
     """
-    第九十八版：
     UI 預覽用快取縮圖。
     之前每次 rerun 都重新讀取原始大圖，照片多時會 lag。
     這版改成：
@@ -2148,7 +1977,6 @@ def build_display_image(path: Path, rotate_angle: int = 0) -> bytes:
 
 def safe_output_name(name: str, default_name: str = "工程抽查照片_UI版") -> str:
     """
-    第九十八版：
     使用者可自行輸入輸出 Word 檔案名稱。
     這裡會移除 Windows 不允許的檔名字元。
     """
@@ -2212,7 +2040,6 @@ def _set_rfonts(rfonts, font_name: str = "標楷體") -> None:
 
 def set_run_font_kai(run, font_name: str = "標楷體") -> None:
     """
-    第九十八版：
     修正前版有些文字沒有真正套到標楷體的問題。
     原因是 qn 沒有在字型函式可用範圍內，導致 try/pass 靜默失敗。
     """
@@ -2325,7 +2152,7 @@ def force_all_existing_rfonts_kai(doc, font_name: str = "標楷體") -> None:
 def set_document_font_kai(doc, font_name: str = "標楷體") -> None:
     """
     輸出 Word 全文件套用標楷體。
-    第八十七版會同時處理：
+    會同時處理：
     - 文件預設字型 docDefaults
     - 所有 styles
     - 所有 paragraph runs
@@ -2378,28 +2205,9 @@ def set_cell(cell, text: str, bold: bool = False) -> None:
     set_run_font_kai(run)
 
 
-def append_table_from_template(doc, template_tbl_xml):
-    from copy import deepcopy
-    from docx.table import Table
-
-    new_tbl_xml = deepcopy(template_tbl_xml)
-    body = doc._body._element
-    sect_pr = body.sectPr
-
-    if sect_pr is not None:
-        body.remove(sect_pr)
-        body.append(new_tbl_xml)
-        body.append(sect_pr)
-    else:
-        body.append(new_tbl_xml)
-
-    return Table(new_tbl_xml, doc)
-
-
 def prepare_image(path: Path, rotate_angle: int = 0) -> BytesIO:
     """
-    第九十八版：
-    照片轉成記憶體 BytesIO 給 Word 使用，不再輸出 _ui_word_images 暫存檔。
+    照片轉成記憶體 BytesIO 給 Word 使用，不另存暫存檔。
 
     修正重點：
     - 不再裁切照片。
@@ -2432,15 +2240,21 @@ def prepare_image(path: Path, rotate_angle: int = 0) -> BytesIO:
     bio.seek(0)
     return bio
 
+def photo_block_layout(block_index: int) -> tuple[int, int, int, int, int, int]:
+    """
+    工程抽查照片樣板表格中，上 / 下兩個照片區塊的位置：
+    (日期列, 檢查項目列, 設計值實測值列, 照片列, 設計值欄, 實測值欄)
+    上下兩塊的合併儲存格結構不同，所以實測值欄位不一樣。
+    """
+    if block_index == 0:
+        return 0, 1, 2, 3, 0, 2
+    return 4, 5, 6, 7, 0, 1
+
+
 def blank_photo_block(table, block_index: int) -> None:
     """把某個照片區塊留成空白：保留日期／檢查項目／設計值／實測值的欄位標題文字，
     但不填任何數值，照片格也留空。方便日後在 Word 裡手動補資料。"""
-    if block_index == 0:
-        row_date, row_item, row_value, row_photo = 0, 1, 2, 3
-        design_col, actual_col = 0, 2
-    else:
-        row_date, row_item, row_value, row_photo = 4, 5, 6, 7
-        design_col, actual_col = 0, 1
+    row_date, row_item, row_value, row_photo, design_col, actual_col = photo_block_layout(block_index)
 
     set_cell(table.cell(row_date, 0), "日期：")
     set_cell(table.cell(row_item, 0), "檢查項目：")
@@ -2458,12 +2272,7 @@ def fill_photo_block(table, block_index: int, row: pd.Series) -> int | None:
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.shared import Inches
 
-    if block_index == 0:
-        row_date, row_item, row_value, row_photo = 0, 1, 2, 3
-        design_col, actual_col = 0, 2
-    else:
-        row_date, row_item, row_value, row_photo = 4, 5, 6, 7
-        design_col, actual_col = 0, 1
+    row_date, row_item, row_value, row_photo, design_col, actual_col = photo_block_layout(block_index)
 
     design_text = str(row.get("設計值", "") or "").strip()
     actual_text = str(row.get("實測值", "") or "").strip()
@@ -2516,7 +2325,6 @@ def set_template_header(doc, project: str, location: str) -> None:
 
 def add_repeated_photo_header(doc, project: str, location: str) -> None:
     """
-    第九十八版：
     每一頁都補上：
     工程抽查照片
     工程名稱
@@ -2547,13 +2355,12 @@ def create_photo_word(df: pd.DataFrame, output_file_name: str = '', base_photo_w
     from docx.shared import Pt
 
     template = find_first_docx(PHOTO_TEMPLATE_DIR)
-    selected = df[df["輸出"] == True].copy()
 
-    if selected.empty:
-        raise ValueError("沒有勾選任何要輸出的照片。")
+    if df.empty:
+        raise ValueError("沒有任何要輸出的照片。")
 
-    project = str(selected.iloc[0].get("工程名稱", ""))
-    location = str(selected.iloc[0].get("施工地點", ""))
+    project = str(df.iloc[0].get("工程名稱", ""))
+    location = str(df.iloc[0].get("施工地點", ""))
 
     append_to_existing = bool(base_photo_word_bytes)
 
@@ -2581,7 +2388,6 @@ def create_photo_word(df: pd.DataFrame, output_file_name: str = '', base_photo_w
             tbl._element.getparent().remove(tbl._element)
 
         remove_empty_body_paragraphs(doc)
-        compact_photo_word_spacing(doc)
     else:
         doc = Document()
         h = doc.add_paragraph()
@@ -2596,10 +2402,8 @@ def create_photo_word(df: pd.DataFrame, output_file_name: str = '', base_photo_w
         p_location = doc.add_paragraph(f"施工地點：{location}")
         set_paragraph_font_kai(p_location)
         template_tbl_xml = None
-        compact_photo_word_spacing(doc)
 
-    selected = sort_for_word_output(selected)
-    rows = list(selected.iterrows())
+    rows = list(sort_for_word_output(df).iterrows())
 
     grouped_rows: list[list[tuple[Any, pd.Series]]] = []
     current_group: list[tuple[Any, pd.Series]] = []
@@ -2630,7 +2434,7 @@ def create_photo_word(df: pd.DataFrame, output_file_name: str = '', base_photo_w
             _, row1 = chunk[0]
 
             if template_tbl_xml is not None:
-                table = append_table_from_template(doc, template_tbl_xml)
+                table = append_table_xml(doc, template_tbl_xml)
                 rows_to_remove = []
 
                 empty_value_row = fill_photo_block(table, 0, row1)
@@ -2651,18 +2455,20 @@ def create_photo_word(df: pd.DataFrame, output_file_name: str = '', base_photo_w
                 for row_index in sorted(rows_to_remove, reverse=True):
                     remove_table_row_at(table, row_index)
             else:
-                design_text = str(row1.get("設計值", "") or "").strip()
-                actual_text = str(row1.get("實測值", "") or "").strip()
-                doc.add_paragraph(f"日期：{row1.get('日期', '')}")
-                doc.add_paragraph(f"檢查項目：{row1.get('檢查項目', '')}")
-                value_parts = []
-                if design_text:
-                    value_parts.append(f"設計值：{design_text}")
-                if actual_text:
-                    value_parts.append(f"實測值：{actual_text}")
-                if value_parts:
-                    doc.add_paragraph("　".join(value_parts))
-                doc.add_picture(prepare_image(Path(str(row1.get("照片路徑", ""))), int(row1.get("旋轉角度", 0) or 0)))
+                # 找不到照片樣板時的備用排版：同一頁的照片依序列出。
+                for _, photo_row in chunk:
+                    design_text = str(photo_row.get("設計值", "") or "").strip()
+                    actual_text = str(photo_row.get("實測值", "") or "").strip()
+                    doc.add_paragraph(f"日期：{photo_row.get('日期', '')}")
+                    doc.add_paragraph(f"檢查項目：{photo_row.get('檢查項目', '')}")
+                    value_parts = []
+                    if design_text:
+                        value_parts.append(f"設計值：{design_text}")
+                    if actual_text:
+                        value_parts.append(f"實測值：{actual_text}")
+                    if value_parts:
+                        doc.add_paragraph("　".join(value_parts))
+                    doc.add_picture(prepare_image(Path(str(photo_row.get("照片路徑", ""))), int(photo_row.get("旋轉角度", 0) or 0)))
 
             page_count += 1
 
@@ -2679,7 +2485,6 @@ def create_photo_word(df: pd.DataFrame, output_file_name: str = '', base_photo_w
 
 def roc_text_to_date(value: str) -> date:
     """
-    第九十八版：
     日期解析支援：
     - 115年5月19日
     - 2026/5/19
@@ -2741,9 +2546,24 @@ def date_to_roc_text(value: date) -> str:
         return ""
 
 
+def default_landscape_rotation(path: Path) -> int:
+    """
+    照片以橫式為主：直式照片（高 > 寬）預設右轉 90° 變成橫式。
+    方向不對時，使用者仍可用左轉 / 右轉按鈕調整。
+    """
+    try:
+        with Image.open(path) as img:
+            width, height = img.size
+            # EXIF 方向 5~8 代表手機拍攝時有轉 90°，實際顯示的寬高要對調。
+            if img.getexif().get(0x0112, 1) in (5, 6, 7, 8):
+                width, height = height, width
+        return 90 if height > width else 0
+    except Exception:
+        return 0
+
+
 def append_uploaded_photo_to_df(uploaded_file: Any, project: str, location: str, slot_key: str) -> None:
     """
-    第九十八版：
     照片拖進表格後，只新增照片資料。
     不執行 自動辨識、不標記 自動辨識 狀態、不產生 自動辨識 欄位。
     """
@@ -2766,24 +2586,18 @@ def append_uploaded_photo_to_df(uploaded_file: Any, project: str, location: str,
 
     rows = []
     for path in paths:
-        date_from_name = date_from_original_name
-
         rows.append({
-            "輸出": True,
             "照片檔名": path.name,
             "照片路徑": str(path),
             "工程名稱": project or "",
             "施工地點": location or "",
             "施工廠商": st.session_state.get("project_contractor", ""),
-            "日期": date_from_name,
-            "照片分組": extract_group_name(path),
-            "對應表單": "待確認",
+            "日期": date_from_original_name,
             "抽查表工項": "",
             "抽查表工項路徑": "",
-            "抽查表樣本路徑": "",
             "抽查表編號": "",
             "抽查表名稱": "",
-            "旋轉角度": 0,
+            "旋轉角度": default_landscape_rotation(path),
             "檢查項目": "",
             "設計值": "",
             "實測值": "",
@@ -2803,7 +2617,6 @@ def append_uploaded_photo_to_df(uploaded_file: Any, project: str, location: str,
 
 def delete_one_photo(row_idx: int) -> None:
     """
-    第九十八版：
     單一刪除照片。
     只從目前 UI / 輸出資料中移除，不會刪掉你電腦裡的原始照片檔。
     """
@@ -2831,7 +2644,6 @@ def delete_one_photo(row_idx: int) -> None:
 
 def render_photo_drop_zone(slot_key: str, project: str, location: str) -> None:
     """
-    第九十八版：
     Upload 直接就是照片表格內的上傳區。
     不另外顯示黑框、不放在表格外。
     """
@@ -2846,7 +2658,6 @@ def render_photo_drop_zone(slot_key: str, project: str, location: str) -> None:
 
 def render_empty_photo_slot(slot_key: str, project: str = '', location: str = '') -> None:
     """
-    第九十八版：
     空白照片格改成輕量版。
     以前每個空白格都建立 disabled 的 selectbox、text_area、text_input；
     照片格越多，按「新增照片表格」就越慢。
@@ -2868,74 +2679,54 @@ def add_one_empty_slot() -> None:
     st.session_state["extra_empty_slots"] = get_extra_empty_slots() + 1
 
 
-def fragment_if_available(func):
+def render_slot_grid(total_slots: int, render_slot) -> None:
     """
-    第九十八版：
-    如果目前 Streamlit 版本支援 st.fragment，就讓照片區局部重跑。
-    這樣按「新增照片表格」時，不必整個 App 重跑，比較不會卡。
-    舊版 Streamlit 沒有 st.fragment 時，會自動維持原本行為。
+    照片格排版：每 6 格一組，上下兩排各 3 格，組與組之間加分隔線。
+    render_slot(slot_no, position_key) 負責畫出單一格；
+    position_key 例如 top_0_1，用來組成固定的 widget key。
     """
-    fragment = getattr(st, "fragment", None)
-    if callable(fragment):
-        return fragment(func)
-    return func
-
-
-def render_dynamic_empty_slots(total_empty_slots: int, project: str = '', location: str = '') -> None:
-    if total_empty_slots <= 0:
-        return
-
     photos_per_page = 6
-    for page_start in range(0, total_empty_slots, photos_per_page):
-        batch_end = min(page_start + photos_per_page, total_empty_slots)
+    for page_start in range(0, total_slots, photos_per_page):
+        batch_end = min(page_start + photos_per_page, total_slots)
 
-        top_cols = st.columns([1, 1, 1], gap="small")
-        for i in range(3):
-            slot_no = page_start + i
-            with top_cols[i]:
-                if slot_no < batch_end:
-                    render_empty_photo_slot(f"empty_top_{page_start}_{i}", project, location)
-                else:
-                    st.empty()
+        for row_name, offset in [("top", 0), ("bottom", 3)]:
+            cols = st.columns([1, 1, 1], gap="small")
+            for i in range(3):
+                slot_no = page_start + offset + i
+                with cols[i]:
+                    if slot_no < batch_end:
+                        render_slot(slot_no, f"{row_name}_{page_start}_{i}")
+                    else:
+                        st.empty()
 
-        bottom_cols = st.columns([1, 1, 1], gap="small")
-        for i in range(3):
-            slot_no = page_start + 3 + i
-            with bottom_cols[i]:
-                if slot_no < batch_end:
-                    render_empty_photo_slot(f"empty_bottom_{page_start}_{i}", project, location)
-                else:
-                    st.empty()
-
-        if batch_end < total_empty_slots:
+        if batch_end < total_slots:
             st.divider()
 
 
+PHOTO_GRID_CSS = """
+<style>
+.block-container { padding-top: 0.5rem; padding-left: 1rem; padding-right: 1rem; }
+div[data-testid="column"] { min-width: 0; }
+</style>
+"""
+
+
+# st.fragment：按「新增照片表格」等操作時只重跑照片區，不必整個 App 重跑。
+@st.fragment
 def render_empty_grid_ui(project: str = '', location: str = '') -> None:
-    st.markdown(
-        """
-        <style>
-        .block-container { padding-top: 0.5rem; padding-left: 1rem; padding-right: 1rem; }
-        div[data-testid="column"] { min-width: 0; }
-        .photo-box { min-height: 180px; border: 2px dashed #cbd5e1; background: #f8fafc; margin-bottom: 0.35rem; }
-        .date-title { font-weight: 900; font-size: 1.35rem; text-align: center; padding: 1.5rem 0 1rem; }
-        .weekday { text-align: center; font-weight: 800; }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+    st.markdown(PHOTO_GRID_CSS, unsafe_allow_html=True)
 
     add_col1, add_col2 = st.columns([1, 2])
     with add_col1:
-        st.button("新增照片表格", key="add_empty_slot_only", on_click=add_one_empty_slot, use_container_width=True)
+        st.button("新增照片表格", key="add_empty_slot_only", on_click=add_one_empty_slot, width="stretch")
     with add_col2:
         st.caption("照片超過 6 張時，可一直按『新增照片表格』增加空白格。")
 
     total_empty_slots = max(6, 6 + get_extra_empty_slots())
-    render_dynamic_empty_slots(total_empty_slots, project, location)
-
-
-render_empty_grid_ui = fragment_if_available(render_empty_grid_ui)
+    render_slot_grid(
+        total_empty_slots,
+        lambda _slot_no, pos: render_empty_photo_slot(f"empty_{pos}", project, location),
+    )
 
 
 def render_photo_slot(edited: pd.DataFrame, row_idx: int, slot_key: str) -> pd.DataFrame:
@@ -2948,29 +2739,29 @@ def render_photo_slot(edited: pd.DataFrame, row_idx: int, slot_key: str) -> pd.D
         rotate_angle = normalize_rotation(row.get("旋轉角度", 0))
 
         if img_path.exists():
-            st.image(build_display_image(img_path, rotate_angle), use_container_width=True)
+            st.image(build_display_image(img_path, rotate_angle), width="stretch")
         else:
             # 找不到照片時，也直接在照片格內提供上傳
             render_photo_drop_zone(f"{slot_key}_missing", "", "")
 
         rotate_col1, rotate_col2, rotate_col3 = st.columns([1, 1, 1], gap="small")
         with rotate_col1:
-            if st.button("左轉90°", key=f"{key_base}_rotate_left", use_container_width=True):
+            if st.button("左轉90°", key=f"{key_base}_rotate_left", width="stretch"):
                 edited.loc[row_idx, "旋轉角度"] = normalize_rotation(rotate_angle - 90)
                 st.session_state["df"] = edited
                 st.rerun()
         with rotate_col2:
-            if st.button("右轉90°", key=f"{key_base}_rotate_right", use_container_width=True):
+            if st.button("右轉90°", key=f"{key_base}_rotate_right", width="stretch"):
                 edited.loc[row_idx, "旋轉角度"] = normalize_rotation(rotate_angle + 90)
                 st.session_state["df"] = edited
                 st.rerun()
         with rotate_col3:
-            if st.button("刪除", key=f"{key_base}_delete_photo", use_container_width=True):
+            if st.button("刪除", key=f"{key_base}_delete_photo", width="stretch"):
                 delete_one_photo(row_idx)
 
         template_options = record_template_options()
         default_template_option = template_options[0] if template_options else "請先匯入抽查紀錄表 Word"
-        current_template = str(row.get("抽查表工項", "") or row.get("對應表單", "") or default_template_option)
+        current_template = str(row.get("抽查表工項", "") or default_template_option)
         if current_template not in template_options:
             current_template = default_template_option
 
@@ -2991,10 +2782,9 @@ def render_photo_slot(edited: pd.DataFrame, row_idx: int, slot_key: str) -> pd.D
         current_date = str(row.get("日期", "") or "")
         default_pick = roc_text_to_date(current_date) if current_date else None
 
-        # 第九十八版：
         # 移除額外確認按鈕。
         # 直接使用 Streamlit 原生日期欄位：點日期欄位會開月曆，選完日期就立即套用。
-        # 第一百零一版：日期欄位不再預設今天，避免使用者忘記手動選白板日期時
+        # 日期欄位不再預設今天，避免使用者忘記手動選白板日期時
         # 誤用今天日期；欄位留空會強制使用者自己選擇。
         picked_date = st.date_input(
             "日期",
@@ -3003,7 +2793,7 @@ def render_photo_slot(edited: pd.DataFrame, row_idx: int, slot_key: str) -> pd.D
         )
         date_value = date_to_roc_text(picked_date) if picked_date else ""
 
-        # 第一百版：畫面只保留使用者原本要填的欄位，不再新增額外控制項。
+        # 畫面只保留使用者原本要填的欄位，不再新增額外控制項。
         item_value = st.text_area(
             "檢查項目",
             value=str(row.get("檢查項目", "") or ""),
@@ -3031,95 +2821,52 @@ def render_photo_slot(edited: pd.DataFrame, row_idx: int, slot_key: str) -> pd.D
             edited.loc[row_idx, "抽查表工項"] = selected_template
 
         edited.loc[row_idx, "抽查表工項路徑"] = selected_template_path
-        edited.loc[row_idx, "抽查表樣本路徑"] = selected_template_path
         edited.loc[row_idx, "抽查表編號"] = record_work_item_code_from_label(selected_template)
         edited.loc[row_idx, "抽查表名稱"] = record_work_item_name_from_label(selected_template)
-        edited.loc[row_idx, "對應表單"] = edited.loc[row_idx, "抽查表工項"] or "待確認"
         edited.loc[row_idx, "旋轉角度"] = rotate_angle
         edited.loc[row_idx, "日期"] = date_value
         edited.loc[row_idx, "檢查項目"] = item_value
         edited.loc[row_idx, "設計值"] = design_value
         edited.loc[row_idx, "實測值"] = actual_value
-        edited.loc[row_idx, "輸出"] = True
 
     return edited
 
 
+@st.fragment
 def render_photo_card_editor(df: pd.DataFrame, project: str = '', location: str = '') -> pd.DataFrame:
     edited = df.copy().reset_index(drop=True)
 
-    st.markdown(
-        """
-        <style>
-        .block-container { padding-top: 0.5rem; padding-left: 1rem; padding-right: 1rem; }
-        div[data-testid="column"] { min-width: 0; }
-        .photo-box { min-height: 180px; border: 2px dashed #cbd5e1; background: #f8fafc; margin-bottom: 0.35rem; }
-        .date-title { font-weight: 900; font-size: 1.35rem; text-align: center; padding: 1.5rem 0 1rem; }
-        .weekday { text-align: center; font-weight: 800; }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+    st.markdown(PHOTO_GRID_CSS, unsafe_allow_html=True)
 
-    if "輸出" not in edited.columns:
-        edited["輸出"] = True
-    if "對應表單" not in edited.columns:
-        edited["對應表單"] = "待確認"
-    if "抽查表工項" not in edited.columns:
-        edited["抽查表工項"] = ""
-    if "抽查表工項路徑" not in edited.columns:
-        edited["抽查表工項路徑"] = ""
-    if "抽查表樣本路徑" not in edited.columns:
-        edited["抽查表樣本路徑"] = ""
-    if "抽查表編號" not in edited.columns:
-        edited["抽查表編號"] = ""
-    if "抽查表名稱" not in edited.columns:
-        edited["抽查表名稱"] = ""
-    if "施工廠商" not in edited.columns:
-        edited["施工廠商"] = st.session_state.get("project_contractor", "")
-    if "旋轉角度" not in edited.columns:
-        edited["旋轉角度"] = 0
+    column_defaults = {
+        "抽查表工項": "",
+        "抽查表工項路徑": "",
+        "抽查表編號": "",
+        "抽查表名稱": "",
+        "施工廠商": st.session_state.get("project_contractor", ""),
+        "旋轉角度": 0,
+    }
+    for col, default in column_defaults.items():
+        if col not in edited.columns:
+            edited[col] = default
 
     add_col1, add_col2 = st.columns([1, 2])
     with add_col1:
-        st.button("新增照片表格", key="add_photo_slot_with_data", on_click=add_one_empty_slot, use_container_width=True)
+        st.button("新增照片表格", key="add_photo_slot_with_data", on_click=add_one_empty_slot, width="stretch")
     with add_col2:
         st.caption("如果照片表格不夠用，可一直按『新增照片表格』，系統會持續增加空白格。")
 
-    photos_per_page = 6
     existing_count = len(edited)
-    extra_slots = get_extra_empty_slots()
-    total_slots = max(6, existing_count + extra_slots)
+    total_slots = max(6, existing_count + get_extra_empty_slots())
 
-    for page_start in range(0, total_slots, photos_per_page):
-        batch_end = min(page_start + photos_per_page, total_slots)
+    def render_slot(slot_no: int, pos: str) -> None:
+        nonlocal edited
+        if slot_no < existing_count:
+            edited = render_photo_slot(edited, slot_no, pos)
+        else:
+            render_empty_photo_slot(f"blank_{pos}", project, location)
 
-        top_cols = st.columns([1, 1, 1], gap="small")
-        for i in range(3):
-            slot_no = page_start + i
-            with top_cols[i]:
-                if slot_no < batch_end:
-                    if slot_no < existing_count:
-                        edited = render_photo_slot(edited, slot_no, f"top_{page_start}_{i}")
-                    else:
-                        render_empty_photo_slot(f"blank_top_{page_start}_{i}", project, location)
-                else:
-                    st.empty()
-
-        bottom_cols = st.columns([1, 1, 1], gap="small")
-        for i in range(3):
-            slot_no = page_start + 3 + i
-            with bottom_cols[i]:
-                if slot_no < batch_end:
-                    if slot_no < existing_count:
-                        edited = render_photo_slot(edited, slot_no, f"bottom_{page_start}_{i}")
-                    else:
-                        render_empty_photo_slot(f"blank_bottom_{page_start}_{i}", project, location)
-                else:
-                    st.empty()
-
-        if batch_end < total_slots:
-            st.divider()
+    render_slot_grid(total_slots, render_slot)
 
     # fragment 局部重跑時，main 不一定會整段重跑；
     # 所以這裡直接把最新照片資料寫回 session_state。
@@ -3127,21 +2874,8 @@ def render_photo_card_editor(df: pd.DataFrame, project: str = '', location: str 
     return edited
 
 
-render_photo_card_editor = fragment_if_available(render_photo_card_editor)
-
-
-@st.cache_data(show_spinner=False, max_entries=64)
-def read_output_file_bytes(path_str: str, mtime_ns: int, file_size: int) -> bytes:
-    """
-    下載按鈕讀檔快取。
-    避免每次畫面重跑都重新讀 Word 檔。
-    """
-    return Path(path_str).read_bytes()
-
-
 def set_last_generated_words(photo_word: dict[str, Any], record_words: list[dict[str, Any]], missing_record_templates: list[str]) -> None:
     """
-    第九十八版：
     產出後只把 Word bytes 存在 session_state 供下載。
     不再把 Word 寫進「輸出」資料夾。
     """
@@ -3156,7 +2890,7 @@ def set_last_generated_words(photo_word: dict[str, Any], record_words: list[dict
 def render_last_generated_word_downloads() -> None:
     """
     固定顯示上一次產出的 Word 下載按鈕。
-    第九十八版：下載來源為記憶體 bytes，不需要本機存檔。
+    下載來源為記憶體 bytes，不需要本機存檔。
     """
     info = st.session_state.get("last_generated_words")
     if not isinstance(info, dict):
@@ -3183,7 +2917,7 @@ def render_last_generated_word_downloads() -> None:
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             key=f"download_photo_word_{photo_word['file_name']}",
             on_click="ignore",
-            use_container_width=True,
+            width="stretch",
         )
 
     if valid_records:
@@ -3196,7 +2930,7 @@ def render_last_generated_word_downloads() -> None:
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 key=f"download_record_word_{w['file_name']}",
                 on_click="ignore",
-                use_container_width=True,
+                width="stretch",
             )
 
     if missing:
@@ -3206,7 +2940,6 @@ def render_last_generated_word_downloads() -> None:
         )
 def validate_existing_docx_upload(uploaded_file: Any, label: str) -> bytes:
     """
-    第九十八版：
     接續舊 Word 只支援 .docx。
     因為這裡是直接把 Word 載入記憶體當底稿，不再額外存成暫存檔，避免資料夾累積。
     """
@@ -3245,7 +2978,7 @@ def render_existing_word_uploader(
         st.success(f"目前接續：{st.session_state.get(state_name_key, '已匯入 Word')}")
 
     if st.session_state.get(state_bytes_key):
-        if st.button(f"移除{title}", key=f"clear_{state_bytes_key}", use_container_width=True):
+        if st.button(f"移除{title}", key=f"clear_{state_bytes_key}", width="stretch"):
             st.session_state.pop(state_bytes_key, None)
             st.session_state.pop(state_name_key, None)
             st.rerun()
@@ -3275,7 +3008,7 @@ def get_shared_app_password() -> str:
 
 def require_shared_password_login() -> None:
     """
-    第一版網站登入：一組公司共用密碼。
+    網站登入：一組公司共用密碼。
     密碼不寫死在程式碼，避免上 GitHub 或部署時外洩。
     """
     password = get_shared_app_password()
@@ -3289,7 +3022,7 @@ def require_shared_password_login() -> None:
     if st.session_state.get("shared_password_authenticated") is True:
         with st.sidebar:
             st.caption("已通過公司共用密碼")
-            if st.button("登出", key="logout_shared_password", use_container_width=True):
+            if st.button("登出", key="logout_shared_password", width="stretch"):
                 st.session_state.pop("shared_password_authenticated", None)
                 st.rerun()
             st.divider()
@@ -3300,7 +3033,7 @@ def require_shared_password_login() -> None:
 
     with st.form("shared_password_login_form"):
         entered_password = st.text_input("共用密碼", type="password")
-        submitted = st.form_submit_button("登入", use_container_width=True)
+        submitted = st.form_submit_button("登入", width="stretch")
 
     if submitted:
         if hmac.compare_digest(str(entered_password or ""), password):
@@ -3334,7 +3067,6 @@ def main() -> None:
 
     with st.sidebar:
         st.header("工程資料")
-        st.caption("目前版本：第100版（無月曆套用按鈕／無最近下拉選單）")
         project = st.text_input(
             "工程名稱",
             placeholder="請輸入本案工程名稱，例如：哈拉灣溪橋下游右岸改善二期工程",
@@ -3360,36 +3092,9 @@ def main() -> None:
 
         clear_clicked = st.button(
             "開始新案件／清空暫存與輸出",
-            help="只會清空目前使用者這個案件的暫存、輸出與匯入樣板。",
-            use_container_width=True,
+            help="只會清空目前使用者這個案件的暫存照片與產出的 Word。",
+            width="stretch",
         )
-
-        st.divider()
-        st.header("接續既有 Word")
-        st.caption("同一個案子隔幾天繼續貼照片時使用；換新案件時不要匯入舊 Word。")
-        render_existing_word_uploader(
-            "既有工程抽查照片 Word",
-            "匯入舊照片 Word（.docx，可選）",
-            "existing_photo_word_bytes",
-            "existing_photo_word_name",
-            "existing_photo_word_upload",
-        )
-        render_existing_word_uploader(
-            "既有抽查紀錄表 Word",
-            "匯入舊抽查表 Word（.docx，可選）",
-            "existing_record_word_bytes",
-            "existing_record_word_name",
-            "existing_record_word_upload",
-        )
-
-        st.divider()
-        st.header("工程抽查表樣板")
-        st.caption("固定空白樣本。請先把固定樣板放在工程抽查照片樣板資料夾內。")
-        current_photo_template = find_first_docx(PHOTO_TEMPLATE_DIR)
-        if current_photo_template:
-            st.success(f"目前樣板：{current_photo_template.name}")
-        else:
-            st.warning("尚未找到工程抽查表樣板。")
 
         st.divider()
         st.header("抽查紀錄表樣本")
@@ -3402,8 +3107,8 @@ def main() -> None:
 
         record_template_upload_key = f"record_template_uploads_{st.session_state['record_template_uploader_nonce']}"
         record_template_uploads = st.file_uploader(
-            f"匯入抽查紀錄表樣本（{', '.join('.' + x for x in allowed_record_upload_types())}，可多選）",
-            type=allowed_record_upload_types(),
+            "匯入抽查紀錄表樣本（.doc, .docx，可多選）",
+            type=["doc", "docx"],
             accept_multiple_files=True,
             key=record_template_upload_key,
         )
@@ -3434,10 +3139,38 @@ def main() -> None:
         else:
             st.info("尚未匯入抽查紀錄表 Word。")
 
+        st.divider()
+        st.header("接續既有 Word")
+        st.caption("同一個案子隔幾天繼續貼照片時使用；換新案件時不要匯入舊 Word。")
+        render_existing_word_uploader(
+            "既有工程抽查照片 Word",
+            "匯入舊照片 Word（.docx，可選）",
+            "existing_photo_word_bytes",
+            "existing_photo_word_name",
+            "existing_photo_word_upload",
+        )
+        render_existing_word_uploader(
+            "既有抽查紀錄表 Word",
+            "匯入舊抽查表 Word（.docx，可選）",
+            "existing_record_word_bytes",
+            "existing_record_word_name",
+            "existing_record_word_upload",
+        )
+
+        st.divider()
+        st.header("工程抽查表樣板")
+        st.caption("固定空白樣本。請先把固定樣板放在工程抽查照片樣板資料夾內。")
+        current_photo_template = find_first_docx(PHOTO_TEMPLATE_DIR)
+        if current_photo_template:
+            st.success(f"目前樣板：{current_photo_template.name}")
+        else:
+            st.warning("尚未找到工程抽查表樣板。")
+
+
     if clear_clicked:
         clear_current_case_files()
         reset_current_case_state()
-        st.success("已清空本案暫存照片、輸出 Word、_ui_word_images，可開始新案件。")
+        st.success("已清空本案暫存照片與產出的 Word，可開始新案件。")
         st.rerun()
 
     if "extra_empty_slots" not in st.session_state:
@@ -3455,17 +3188,15 @@ def main() -> None:
     st.divider()
     st.subheader("③ 產出 Word")
 
-    selected_count = int(edited["輸出"].fillna(False).sum())
-    st.write(f"目前勾選輸出照片：**{selected_count}** 張")
+    photo_count = len(edited)
+    st.write(f"目前輸出照片：**{photo_count}** 張")
 
-    selected_mask = edited["輸出"].fillna(False) == True
-    missing_date_rows = edited[selected_mask & (edited["日期"].fillna("").astype(str).str.strip() == "")]
-    has_missing_date = len(missing_date_rows) > 0
-    missing_photo_numbers = [idx + 1 for idx in missing_date_rows.index.tolist()]
+    def blank_photo_numbers(col: str) -> list[int]:
+        blank = edited[col].fillna("").astype(str).str.strip() == ""
+        return [idx + 1 for idx in edited[blank].index.tolist()]
 
-    missing_item_rows = edited[selected_mask & (edited["抽查表工項"].fillna("").astype(str).str.strip() == "")]
-    has_missing_item = len(missing_item_rows) > 0
-    missing_item_numbers = [idx + 1 for idx in missing_item_rows.index.tolist()]
+    missing_photo_numbers = blank_photo_numbers("日期")
+    missing_item_numbers = blank_photo_numbers("抽查表工項")
 
     c1, c2, c3 = st.columns([1, 1, 1])
 
@@ -3473,21 +3204,21 @@ def main() -> None:
         st.empty()
 
     with c2:
-        make_words = st.button("產出 Word", type="primary", use_container_width=True)
+        make_words = st.button("產出 Word", type="primary", width="stretch")
 
     with c3:
         st.caption("本版只輸出 Word，不產生 Excel / ZIP。")
 
     if make_words:
-        if selected_count == 0:
-            st.error("至少要勾選一張照片才能產出 Word。")
-        elif has_missing_date:
+        if photo_count == 0:
+            st.error("至少要有一張照片才能產出 Word。")
+        elif missing_photo_numbers:
             numbers_text = "、".join(f"照片 #{n}" for n in missing_photo_numbers)
             st.error(
                 f"無法產出：以下 {len(missing_photo_numbers)} 張照片還沒選日期，"
                 f"請回到上面對應編號的照片把日期填好後再按產出 Word。\n\n未填日期：{numbers_text}"
             )
-        elif has_missing_item:
+        elif missing_item_numbers:
             numbers_text = "、".join(f"照片 #{n}" for n in missing_item_numbers)
             st.error(
                 f"無法產出：以下 {len(missing_item_numbers)} 張照片還沒選抽查表工項，"
@@ -3499,25 +3230,30 @@ def main() -> None:
             contractor_value = str(st.session_state.get("project_contractor", "") or contractor or "").strip()
             output_name_value = str(st.session_state.get("output_file_name", "") or output_file_name or "").strip()
 
-            # 若使用者已經填在左側，但 Streamlit 當次 rerun 尚未同步，改用目前 DataFrame 裡的資料當 fallback。
-            if not project_value and "工程名稱" in edited.columns and not edited.empty:
-                project_value = str(edited["工程名稱"].dropna().astype(str).replace("", pd.NA).dropna().head(1).iloc[0]) if edited["工程名稱"].dropna().astype(str).str.strip().any() else ""
-            if not location_value and "施工地點" in edited.columns and not edited.empty:
-                location_value = str(edited["施工地點"].dropna().astype(str).replace("", pd.NA).dropna().head(1).iloc[0]) if edited["施工地點"].dropna().astype(str).str.strip().any() else ""
-            if not contractor_value and "施工廠商" in edited.columns and not edited.empty:
-                contractor_value = str(edited["施工廠商"].dropna().astype(str).replace("", pd.NA).dropna().head(1).iloc[0]) if edited["施工廠商"].dropna().astype(str).str.strip().any() else ""
+            def first_filled_value(col: str) -> str:
+                # 照片資料中第一個非空白的值；沒有則回傳空字串。
+                if col not in edited.columns:
+                    return ""
+                values = edited[col].dropna().astype(str)
+                if not values.str.strip().any():
+                    return ""
+                return str(values[values != ""].iloc[0])
+
+            # 若使用者已經填在左側，但 Streamlit 當次 rerun 尚未同步，改用目前照片資料當 fallback。
+            project_value = project_value or first_filled_value("工程名稱")
+            location_value = location_value or first_filled_value("施工地點")
+            contractor_value = contractor_value or first_filled_value("施工廠商")
 
             if not project_value or not location_value:
                 st.error("請先在左側輸入工程名稱與施工地點 / 分項工程，再產出 Word。")
             else:
                 try:
-                    # 產出前強制以左側目前輸入的工程資料覆蓋勾選資料，避免不同案件沿用舊名稱。
-                    edited.loc[edited["輸出"] == True, "工程名稱"] = project_value
-                    edited.loc[edited["輸出"] == True, "施工地點"] = location_value
-                    edited.loc[edited["輸出"] == True, "施工廠商"] = contractor_value
+                    # 產出前強制以左側目前輸入的工程資料覆蓋照片資料，避免不同案件沿用舊名稱。
+                    edited["工程名稱"] = project_value
+                    edited["施工地點"] = location_value
+                    edited["施工廠商"] = contractor_value
 
-                    # 第九十八版：Word 只存在記憶體給使用者下載，不寫入輸出資料夾。
-                    save_user_memory(edited)
+                    # Word 只存在記憶體給使用者下載，不寫入資料夾。
                     photo_word = create_photo_word(
                         edited,
                         output_name_value,
@@ -3535,7 +3271,6 @@ def main() -> None:
                 except Exception as e:
                     st.error(f"產出失敗：{e}")
 
-    # 第九十八版：
     # 上一次產出的 Word 下載按鈕固定保留。
     # 按任一下載不會讓另一個下載按鈕消失。
     render_last_generated_word_downloads()
