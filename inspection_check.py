@@ -555,6 +555,49 @@ def find_selected_record_table_in_doc(doc, row: pd.Series):
     return best_table
 
 
+FORM_CODE_RE = re.compile(r"編\s*號\s*[：:]\s*([A-Z]\d{2})", re.IGNORECASE)
+
+
+def selected_record_code(row: pd.Series) -> str:
+    return str(row.get("抽查表編號", "") or record_work_item_code_from_label(str(row.get("抽查表工項", ""))) or "").strip().upper()
+
+
+def trim_table_to_selected_form(table, code: str) -> None:
+    """
+    附錄二裡的抽查表若彼此緊貼（中間沒有空行），Word 會把它們併成同一個表格，
+    例如 B03～B10 全在一個表格裡。這時只保留所選編號那一段的列：
+    從「編號：B08」那一列開始，到下一張表的「編號」列之前為止。
+    表格裡只有一張抽查表時不做任何處理。
+    """
+    code = str(code or "").strip().upper()
+    if not code:
+        return
+
+    tbl = table._tbl
+    rows = list(tbl.tr_lst)
+    row_texts = ["".join(t.text or "" for t in tr.iter(qn("w:t"))) for tr in rows]
+
+    starts: list[tuple[int, str]] = []
+    for i, text in enumerate(row_texts):
+        m = FORM_CODE_RE.search(text)
+        if m:
+            start = i
+            # 標題若獨立在「編號」列的上一列，也算同一張表
+            if i > 0 and "抽查紀錄表" in row_texts[i - 1] and not FORM_CODE_RE.search(row_texts[i - 1]):
+                start = i - 1
+            starts.append((start, m.group(1).upper()))
+
+    if len(starts) <= 1:
+        return
+
+    for n, (start, form_code) in enumerate(starts):
+        if form_code == code:
+            end = starts[n + 1][0] if n + 1 < len(starts) else len(rows)
+            for tr in rows[:start] + rows[end:]:
+                tbl.remove(tr)
+            return
+
+
 def keep_only_table_in_document(doc, table) -> None:
     """
     Preserve the selected table inside its original document instead of copying it
@@ -1197,6 +1240,7 @@ def create_record_words(
 
         if first_table is not None:
             keep_only_table_in_document(out_doc, first_table)
+            trim_table_to_selected_form(first_table, selected_record_code(first_row))
             fill_selected_record_table(first_table, first_row)
             optimize_record_table_output_layout(out_doc, first_table)
             preserved_first_table = True
@@ -1211,6 +1255,7 @@ def create_record_words(
 
         apply_source_table_section_to_doc(out_doc, source_table)
         new_table = append_table_xml(out_doc, source_table._tbl)
+        trim_table_to_selected_form(new_table, selected_record_code(row))
         fill_selected_record_table(new_table, row)
         optimize_record_table_output_layout(out_doc, new_table)
 
