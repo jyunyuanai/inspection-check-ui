@@ -423,14 +423,12 @@ def photo_word_work_item_label(row: pd.Series) -> str:
 def photo_word_page_group_key(row: pd.Series) -> tuple:
     """
     工程抽查照片 Word 頁面分組規則：
-    - 同日期 + 同工項：可以放同一頁，最多兩張
-    - 同日期 + 不同工項：分不同頁
+    - 同日期：放同一頁，最多兩張（不同工項也放在一起）
     - 不同日期：分不同頁
-    - 沒選工項：同日期統一當同一組，不會因檢查項目不同而拆頁
+    同一天內的照片順序由 sort_for_word_output 決定（依工項排序，相同工項會相鄰）。
     """
     date_text = str(row.get("日期", "") or "").strip()
-    item_text = photo_word_work_item_label(row)
-    return (roc_date_sort_value(date_text), date_text, natural_sort_text(item_text))
+    return (roc_date_sort_value(date_text), date_text)
 
 
 def sort_for_word_output(df: pd.DataFrame) -> pd.DataFrame:
