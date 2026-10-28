@@ -480,6 +480,9 @@ def is_catalog_table_text(text: str) -> bool:
         return True
     if "工程抽查紀錄表目錄" in t:
         return True
+    # 目錄欄位也可能寫成「序號｜抽查紀錄表名稱｜頁碼」，頁碼為「附錄2-1」等
+    if b_count >= 3 and "頁碼" in t and "抽查紀錄表名稱" in t:
+        return True
     return False
 
 
